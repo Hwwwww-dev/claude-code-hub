@@ -34,7 +34,9 @@ const scheduledJobs = new Map<string, schedule.Job>();
 /**
  * Process notification job
  */
-async function processNotification(jobData: NotificationJobData): Promise<{ success: boolean; skipped?: boolean }> {
+async function processNotification(
+  jobData: NotificationJobData
+): Promise<{ success: boolean; skipped?: boolean }> {
   const { type, webhookUrl, data } = jobData;
 
   logger.info({
@@ -52,9 +54,7 @@ async function processNotification(jobData: NotificationJobData): Promise<{ succ
         // Dynamically generate leaderboard data
         const { getNotificationSettings } = await import("@/repository/notifications");
         const settings = await getNotificationSettings();
-        const leaderboardData = await generateDailyLeaderboard(
-          settings.dailyLeaderboardTopN || 5
-        );
+        const leaderboardData = await generateDailyLeaderboard(settings.dailyLeaderboardTopN || 5);
 
         if (!leaderboardData) {
           logger.info({
@@ -70,9 +70,7 @@ async function processNotification(jobData: NotificationJobData): Promise<{ succ
         // Dynamically generate cost alert data
         const { getNotificationSettings } = await import("@/repository/notifications");
         const settings = await getNotificationSettings();
-        const alerts = await generateCostAlerts(
-          parseFloat(settings.costAlertThreshold || "0.80")
-        );
+        const alerts = await generateCostAlerts(parseFloat(settings.costAlertThreshold || "0.80"));
 
         if (alerts.length === 0) {
           logger.info({

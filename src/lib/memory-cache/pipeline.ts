@@ -10,7 +10,14 @@
 
 import type { InMemoryStore } from "./index";
 
-type CommandArgs = (string | number | boolean | undefined | { withScores?: boolean } | Record<string, string>)[];
+type CommandArgs = (
+  | string
+  | number
+  | boolean
+  | undefined
+  | { withScores?: boolean }
+  | Record<string, string>
+)[];
 
 interface Command {
   method: string;

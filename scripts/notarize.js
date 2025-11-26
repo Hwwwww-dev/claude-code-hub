@@ -3,8 +3,8 @@
 
 exports.default = async function notarizing(context) {
   // Skip notarization in development or if not on macOS
-  if (process.platform !== 'darwin' || process.env.SKIP_NOTARIZE === 'true') {
-    console.log('Skipping notarization');
+  if (process.platform !== "darwin" || process.env.SKIP_NOTARIZE === "true") {
+    console.log("Skipping notarization");
     return;
   }
 

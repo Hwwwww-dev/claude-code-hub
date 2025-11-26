@@ -449,7 +449,13 @@ export class SessionManager {
       if (isFirstAttempt) {
         const key = `session:${sessionId}:provider`;
         // Use SET NX to avoid overwriting concurrent requests
-        const result = await memoryClient.set(key, newProviderId.toString(), "EX", this.SESSION_TTL, "NX");
+        const result = await memoryClient.set(
+          key,
+          newProviderId.toString(),
+          "EX",
+          this.SESSION_TTL,
+          "NX"
+        );
 
         if (result === "OK") {
           logger.info("SessionManager: Bound session to provider (first success)", {
@@ -479,7 +485,13 @@ export class SessionManager {
       if (!currentProviderIdStr) {
         // No binding, use SET NX to bind
         const key = `session:${sessionId}:provider`;
-        const result = await memoryClient.set(key, newProviderId.toString(), "EX", this.SESSION_TTL, "NX");
+        const result = await memoryClient.set(
+          key,
+          newProviderId.toString(),
+          "EX",
+          this.SESSION_TTL,
+          "NX"
+        );
 
         if (result === "OK") {
           logger.info("SessionManager: Bound session (no previous binding)", {

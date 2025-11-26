@@ -156,10 +156,7 @@ export function getConfig<K extends keyof ElectronConfig>(key: K): ElectronConfi
  * @param key Configuration key
  * @param value Configuration value
  */
-export function setConfig<K extends keyof ElectronConfig>(
-  key: K,
-  value: ElectronConfig[K],
-): void {
+export function setConfig<K extends keyof ElectronConfig>(key: K, value: ElectronConfig[K]): void {
   const s = initStore() as { set?: (key: K, value: ElectronConfig[K]) => void } | null;
   if (s?.set) {
     s.set(key, value);

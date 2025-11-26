@@ -12,11 +12,7 @@ const nextConfig: NextConfig = {
 
   // 排除服务端专用包（避免打包到客户端）
   // postgres 和 drizzle-orm 包含 Node.js 原生模块（net, tls, crypto, stream, perf_hooks）
-  serverExternalPackages: [
-    "ioredis",
-    "postgres",
-    "drizzle-orm",
-  ],
+  serverExternalPackages: ["ioredis", "postgres", "drizzle-orm"],
 
   // 强制包含 undici 到 standalone 输出
   // Next.js 依赖追踪无法正确追踪动态导入和类型导入的传递依赖

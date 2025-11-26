@@ -53,11 +53,7 @@ export async function scheduleAutoCleanup() {
         const beforeDate = new Date();
         beforeDate.setDate(beforeDate.getDate() - retentionDays);
 
-        const result = await cleanupLogs(
-          { beforeDate },
-          { batchSize },
-          { type: "scheduled" }
-        );
+        const result = await cleanupLogs({ beforeDate }, { batchSize }, { type: "scheduled" });
 
         if (result.error) {
           logger.error({
