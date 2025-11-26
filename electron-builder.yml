@@ -1,0 +1,196 @@
+# electron-builder.yml - Claude Code Hub Desktop
+# Build configuration for multi-platform Electron packaging
+
+appId: com.claudecodehub.desktop
+productName: Claude Code Hub
+copyright: Copyright (c) 2024 Claude Code Hub
+artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
+
+# Build directories
+directories:
+  output: dist-electron
+  buildResources: build
+
+# Files to include in the build
+files:
+  - "!**/.git"
+  - "!**/.github"
+  - "!**/.workflow"
+  - "!**/node_modules/*/{CHANGELOG.md,README.md,readme.md,LICENSE,license}"
+  - "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}"
+  - "!**/node_modules/.bin"
+  - "!**/node_modules/.cache"
+  - "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}"
+  - "!.editorconfig"
+  - "!**/._*"
+  - "!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,.gitignore,.gitattributes}"
+  - "!**/{thumbs.db,ehthumbs.db,desktop.ini}"
+  - "!**/tests"
+  - "!**/coverage"
+  # Include Electron main process files
+  - "electron/**/*.js"
+  - "electron/**/*.js.map"
+  - "VERSION"
+  # Exclude source and build artifacts
+  - "!.next"
+  - "!src"
+  - "!drizzle"
+  - "!.workflow"
+  - "!dev"
+
+# Extra resources - Next.js standalone server
+extraResources:
+  - from: ".next/standalone"
+    to: "server"
+    filter:
+      - "**/*"
+      - "!node_modules/.cache"
+  - from: ".next/static"
+    to: "server/.next/static"
+    filter:
+      - "**/*"
+  - from: "public"
+    to: "server/public"
+    filter:
+      - "**/*"
+
+# ASAR archive settings
+asar: true
+asarUnpack:
+  - "**/*.node"
+  - "**/node_modules/sharp/**"
+  - "**/node_modules/@electric-sql/pglite/**"
+
+# ===== macOS Configuration =====
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  darkModeSupport: true
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  target:
+    - target: dmg
+      arch:
+        - universal
+    - target: zip
+      arch:
+        - universal
+
+# DMG configuration
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+  window:
+    width: 540
+    height: 380
+
+# ===== Windows Configuration =====
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+    - target: portable
+      arch:
+        - x64
+
+# NSIS installer configuration
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Claude Code Hub
+  uninstallDisplayName: Claude Code Hub
+  deleteAppDataOnUninstall: false
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  perMachine: false
+  allowElevation: true
+
+# Portable configuration
+portable:
+  artifactName: "${productName}-${version}-portable.${ext}"
+
+# ===== Linux Configuration =====
+linux:
+  icon: build/icons
+  category: Development
+  maintainer: Claude Code Hub Team
+  vendor: Claude Code Hub
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+    - target: deb
+      arch:
+        - x64
+    - target: rpm
+      arch:
+        - x64
+  desktop:
+    Name: Claude Code Hub
+    Comment: AI API Proxy Platform
+    Categories: Development;Utility;
+
+# AppImage configuration
+appImage:
+  artifactName: "${productName}-${version}-${arch}.AppImage"
+
+# Debian package configuration
+deb:
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+
+# RPM package configuration
+rpm:
+  depends:
+    - gtk3
+    - libnotify
+    - nss
+    - libXScrnSaver
+    - libXtst
+    - xdg-utils
+    - at-spi2-core
+
+# ===== Auto Update Configuration =====
+publish:
+  - provider: github
+    owner: ${GH_OWNER:-owner}
+    repo: claude-code-hub
+    releaseType: release
+    publishAutoUpdate: true
+
+# Auto-updater compatibility
+electronUpdaterCompatibility: ">=2.16"
+
+# Hooks
+afterSign: scripts/notarize.js
+
+# Build options
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/
+
+compression: maximum
+removePackageScripts: true
+
+# Build metadata
+buildVersion: "1"

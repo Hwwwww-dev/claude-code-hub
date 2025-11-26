@@ -37,7 +37,7 @@ export async function sendCircuitBreakerAlert(data: CircuitBreakerAlertData): Pr
         return;
       }
 
-      // 动态导入通知队列（避免 Turbopack 编译 Bull）
+      // 动态导入通知队列
       const { addNotificationJob } = await import("./notification-queue");
 
       // 发送告警

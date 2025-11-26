@@ -92,7 +92,6 @@ export async function updateNotificationSettingsAction(
 
     // 重新调度通知任务（仅生产环境）
     if (process.env.NODE_ENV === "production") {
-      // 动态导入避免 Turbopack 编译 Bull 模块
       const { scheduleNotifications } = await import("@/lib/notification/notification-queue");
       await scheduleNotifications();
     } else {

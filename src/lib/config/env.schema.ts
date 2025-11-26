@@ -12,39 +12,63 @@ const booleanTransform = (s: string) => s !== "false" && s !== "0";
 /**
  * 环境变量验证schema
  */
-export const EnvSchema = z.object({
-  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
-  DSN: z.preprocess((val) => {
-    // 构建时如果 DSN 为空或是占位符,转为 undefined
-    if (!val || typeof val !== "string") return undefined;
-    if (val.includes("user:password@host:port")) return undefined; // 占位符模板
-    return val;
-  }, z.string().url("数据库URL格式无效").optional()),
-  ADMIN_TOKEN: z.preprocess((val) => {
-    // 空字符串或 "change-me" 占位符转为 undefined
-    if (!val || typeof val !== "string") return undefined;
-    if (val === "change-me") return undefined;
-    return val;
-  }, z.string().min(1, "管理员令牌不能为空").optional()),
-  // ⚠️ 注意: 不要使用 z.coerce.boolean(),它会把字符串 "false" 转换为 true!
-  // 原因: Boolean("false") === true (任何非空字符串都是 truthy)
-  // 正确做法: 使用 transform 显式处理 "false" 和 "0" 字符串
-  AUTO_MIGRATE: z.string().default("true").transform(booleanTransform),
-  PORT: z.coerce.number().default(23000),
-  REDIS_URL: z.string().optional(),
-  ENABLE_RATE_LIMIT: z.string().default("true").transform(booleanTransform),
-  ENABLE_SECURE_COOKIES: z.string().default("true").transform(booleanTransform),
-  SESSION_TTL: z.coerce.number().default(300),
-  DEBUG_MODE: z.string().default("false").transform(booleanTransform),
-  LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
-  TZ: z.string().default("Asia/Shanghai"),
-  ENABLE_MULTI_PROVIDER_TYPES: z.string().default("false").transform(booleanTransform),
-  ENABLE_CIRCUIT_BREAKER_ON_NETWORK_ERRORS: z.string().default("false").transform(booleanTransform),
-  // Fetch 超时配置（毫秒）
-  FETCH_BODY_TIMEOUT: z.coerce.number().default(120000), // 请求/响应体传输超时（默认 120 秒）
-  FETCH_HEADERS_TIMEOUT: z.coerce.number().default(60000), // 响应头接收超时（默认 60 秒）
-  FETCH_CONNECT_TIMEOUT: z.coerce.number().default(30000), // TCP 连接建立超时（默认 30 秒）
-});
+export const EnvSchema = z
+  .object({
+    NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+
+    // Electron Mode Configuration
+    // When true, uses PGlite instead of PostgreSQL and InMemoryStore instead of Redis
+    ELECTRON_MODE: z.string().default("false").transform(booleanTransform),
+    PGLITE_DATA_PATH: z.string().optional(), // Custom path for PGlite database
+
+    DSN: z.preprocess((val) => {
+      // 构建时如果 DSN 为空或是占位符,转为 undefined
+      if (!val || typeof val !== "string") return undefined;
+      if (val.includes("user:password@host:port")) return undefined; // 占位符模板
+      return val;
+    }, z.string().url("数据库URL格式无效").optional()),
+    ADMIN_TOKEN: z.preprocess((val) => {
+      // 空字符串或 "change-me" 占位符转为 undefined
+      if (!val || typeof val !== "string") return undefined;
+      if (val === "change-me") return undefined;
+      return val;
+    }, z.string().min(1, "管理员令牌不能为空").optional()),
+    // ⚠️ 注意: 不要使用 z.coerce.boolean(),它会把字符串 "false" 转换为 true!
+    // 原因: Boolean("false") === true (任何非空字符串都是 truthy)
+    // 正确做法: 使用 transform 显式处理 "false" 和 "0" 字符串
+    AUTO_MIGRATE: z.string().default("true").transform(booleanTransform),
+    PORT: z.coerce.number().default(23000),
+    REDIS_URL: z.string().optional(), // Optional: not required in Electron mode
+    ENABLE_RATE_LIMIT: z.string().default("true").transform(booleanTransform),
+    ENABLE_SECURE_COOKIES: z.string().default("true").transform(booleanTransform),
+    SESSION_TTL: z.coerce.number().default(300),
+    DEBUG_MODE: z.string().default("false").transform(booleanTransform),
+    LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
+    TZ: z.string().default("Asia/Shanghai"),
+    ENABLE_MULTI_PROVIDER_TYPES: z.string().default("false").transform(booleanTransform),
+    ENABLE_CIRCUIT_BREAKER_ON_NETWORK_ERRORS: z
+      .string()
+      .default("false")
+      .transform(booleanTransform),
+    // Fetch 超时配置（毫秒）
+    FETCH_BODY_TIMEOUT: z.coerce.number().default(120000), // 请求/响应体传输超时（默认 120 秒）
+    FETCH_HEADERS_TIMEOUT: z.coerce.number().default(60000), // 响应头接收超时（默认 60 秒）
+    FETCH_CONNECT_TIMEOUT: z.coerce.number().default(30000), // TCP 连接建立超时（默认 30 秒）
+  })
+  .superRefine((data, ctx) => {
+    // In server mode (non-Electron), DSN is required for database connection
+    // In Electron mode, PGlite is used instead (embedded database)
+    if (!data.ELECTRON_MODE && !data.DSN) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "DSN is required in server mode (set ELECTRON_MODE=true for desktop app)",
+        path: ["DSN"],
+      });
+    }
+    // Note: REDIS_URL is optional in both modes
+    // - Server mode: fail-open strategy when Redis unavailable
+    // - Electron mode: uses InMemoryStore instead
+  });
 
 /**
  * 环境变量类型

@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { logger } from "@/lib/logger";
-import { getRedisClient } from "./redis";
+import { getMemoryClient } from "./memory-cache";
 import { SessionTracker } from "./session-tracker";
 import type {
   ActiveSessionInfo,
@@ -170,7 +170,7 @@ export class SessionManager {
     messages: unknown,
     clientSessionId?: string | null
   ): Promise<string> {
-    const redis = getRedisClient();
+    const memoryClient = getMemoryClient();
 
     const messagesLength = Array.isArray(messages) ? messages.length : 0;
 
@@ -190,7 +190,7 @@ export class SessionManager {
         if (concurrentCount > 0) {
           // 场景B：有并发请求 → 这是并发短任务 → 强制新建 session
           const newId = this.generateSessionId();
-          logger.info("SessionManager: 检测到并发短任务，强制新建 session", {
+          logger.info("SessionManager: Detected concurrent short task, forcing new session", {
             originalSessionId: clientSessionId,
             newSessionId: newId,
             messagesLength,
@@ -200,7 +200,7 @@ export class SessionManager {
         }
 
         // 场景A：无并发 → 这可能是长对话的开始 → 允许复用
-        logger.debug("SessionManager: 短上下文但 session 空闲，允许复用（长对话开始）", {
+        logger.debug("SessionManager: Short context but session idle, allowing reuse", {
           sessionId: clientSessionId,
           messagesLength,
         });
@@ -209,7 +209,7 @@ export class SessionManager {
       // 3. 长上下文 or 无并发 → 正常复用
       logger.debug("SessionManager: Using client-provided session", { sessionId: clientSessionId });
       // 刷新 TTL（滑动窗口）
-      if (redis && redis.status === "ready") {
+      if (memoryClient && memoryClient.status === "ready") {
         await this.refreshSessionTTL(clientSessionId).catch((err) => {
           logger.error("SessionManager: Failed to refresh TTL", { error: err });
         });
@@ -235,11 +235,11 @@ export class SessionManager {
       return newId;
     }
 
-    // 3. 尝试从 Redis 查找已有 session
-    if (redis && redis.status === "ready") {
+    // 3. 尝试从缓存查找已有 session
+    if (memoryClient && memoryClient.status === "ready") {
       try {
         const hashKey = `hash:${contentHash}:session`;
-        const existingSessionId = await redis.get(hashKey);
+        const existingSessionId = await memoryClient.get(hashKey);
 
         if (existingSessionId) {
           // 找到已有 session，刷新 TTL
@@ -263,13 +263,13 @@ export class SessionManager {
         });
         return newSessionId;
       } catch (error) {
-        logger.error("SessionManager: Redis error", { error });
-        // 降级：Redis 错误，生成新 session
+        logger.error("SessionManager: Cache error", { error });
+        // 降级：缓存错误，生成新 session
         return this.generateSessionId();
       }
     }
 
-    // 4. Redis 不可用，降级生成新 session
+    // 4. 缓存不可用，降级生成新 session
     return this.generateSessionId();
   }
 
@@ -281,11 +281,11 @@ export class SessionManager {
     sessionId: string,
     keyId: number
   ): Promise<void> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return;
 
     try {
-      const pipeline = redis.pipeline();
+      const pipeline = memoryClient.pipeline();
       const hashKey = `hash:${contentHash}:session`;
 
       // 存储映射关系
@@ -305,11 +305,11 @@ export class SessionManager {
    * 刷新 session TTL（滑动窗口）
    */
   private static async refreshSessionTTL(sessionId: string): Promise<void> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return;
 
     try {
-      const pipeline = redis.pipeline();
+      const pipeline = memoryClient.pipeline();
 
       // 刷新所有 session 相关 key 的 TTL
       pipeline.expire(`session:${sessionId}:key`, this.SESSION_TTL);
@@ -323,16 +323,16 @@ export class SessionManager {
   }
 
   /**
-   * 绑定 session 到 provider（TC-009 修复：使用 SET NX 避免竞态条件）
+   * 绑定 session 到 provider（使用 SET NX 避免竞态条件）
    */
   static async bindSessionToProvider(sessionId: string, providerId: number): Promise<void> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return;
 
     try {
       const key = `session:${sessionId}:provider`;
       // 使用 SET ... NX 保证只有第一次绑定成功（原子操作）
-      const result = await redis.set(
+      const result = await memoryClient.set(
         key,
         providerId.toString(),
         "EX",
@@ -358,11 +358,11 @@ export class SessionManager {
    * 获取 session 绑定的 provider
    */
   static async getSessionProvider(sessionId: string): Promise<number | null> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return null;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return null;
 
     try {
-      const value = await redis.get(`session:${sessionId}:provider`);
+      const value = await memoryClient.get(`session:${sessionId}:provider`);
       if (value) {
         const providerId = parseInt(value, 10);
         if (!isNaN(providerId)) {
@@ -379,19 +379,18 @@ export class SessionManager {
   /**
    * 获取当前绑定供应商的优先级
    *
-   * ⚠️ 修复：从 session:provider 读取（真实绑定），而不是 session:info
-   * 原因：info.providerId 是并发检查通过的供应商，可能请求失败了
+   * 从 session:provider 读取（真实绑定），而不是 session:info
    *
    * @param sessionId - Session ID
    * @returns 优先级数字（数字越小优先级越高），如果未绑定或无法查询则返回 null
    */
   static async getSessionProviderPriority(sessionId: string): Promise<number | null> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return null;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return null;
 
     try {
-      // 修复：从真实绑定关系读取（session:provider）
-      const providerIdStr = await redis.get(`session:${sessionId}:provider`);
+      // 从真实绑定关系读取（session:provider）
+      const providerIdStr = await memoryClient.get(`session:${sessionId}:provider`);
       if (!providerIdStr) {
         return null;
       }
@@ -420,15 +419,13 @@ export class SessionManager {
   /**
    * 智能更新 Session 绑定（主备模式 + 健康自动回迁）
    *
-   * ⚠️ 职责分离：不做分组权限检查（选择器已保证）
-   *
    * 核心策略：
    * 1. 首次绑定：直接绑定到成功的供应商（SET NX 避免并发竞争）
    * 2. 重试成功：智能决策
-   *    a) 新供应商优先级更高（数字更小）→ 直接更新（迁移到主供应商）
-   *    b) 新供应商优先级相同或更低 → 检查原供应商健康状态：
-   *       - 原供应商已熔断 → 更新到新供应商（备用供应商接管）
-   *       - 原供应商健康 → 保持原绑定（优先使用主供应商）
+   *    a) 新供应商优先级更高（数字更小）-> 直接更新（迁移到主供应商）
+   *    b) 新供应商优先级相同或更低 -> 检查原供应商健康状态：
+   *       - 原供应商已熔断 -> 更新到新供应商（备用供应商接管）
+   *       - 原供应商健康 -> 保持原绑定（优先使用主供应商）
    *
    * @param sessionId - Session ID
    * @param newProviderId - 新供应商 ID
@@ -442,17 +439,17 @@ export class SessionManager {
     newProviderPriority: number,
     isFirstAttempt: boolean = false
   ): Promise<{ updated: boolean; reason: string; details?: string }> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") {
-      return { updated: false, reason: "redis_not_ready" };
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") {
+      return { updated: false, reason: "cache_not_ready" };
     }
 
     try {
-      // ========== 情况 1：首次尝试成功 ==========
+      // ========== Case 1: First attempt success ==========
       if (isFirstAttempt) {
         const key = `session:${sessionId}:provider`;
-        // 使用 SET NX 绑定（避免覆盖并发请求）
-        const result = await redis.set(key, newProviderId.toString(), "EX", this.SESSION_TTL, "NX");
+        // Use SET NX to avoid overwriting concurrent requests
+        const result = await memoryClient.set(key, newProviderId.toString(), "EX", this.SESSION_TTL, "NX");
 
         if (result === "OK") {
           logger.info("SessionManager: Bound session to provider (first success)", {
@@ -463,26 +460,26 @@ export class SessionManager {
           return {
             updated: true,
             reason: "first_success",
-            details: `首次成功，绑定到供应商 ${newProviderId} (priority=${newProviderPriority})`,
+            details: `First success, bound to provider ${newProviderId} (priority=${newProviderPriority})`,
           };
         } else {
-          // 并发请求已经绑定了，放弃更新
+          // Concurrent request already bound
           return {
             updated: false,
             reason: "concurrent_binding_exists",
-            details: "并发请求已绑定，跳过",
+            details: "Concurrent request already bound, skipping",
           };
         }
       }
 
-      // ========== 情况 2：重试成功（需要智能决策）==========
+      // ========== Case 2: Retry success (smart decision needed) ==========
 
-      // 2.1 获取当前绑定的供应商 ID
-      const currentProviderIdStr = await redis.get(`session:${sessionId}:provider`);
+      // 2.1 Get current bound provider ID
+      const currentProviderIdStr = await memoryClient.get(`session:${sessionId}:provider`);
       if (!currentProviderIdStr) {
-        // 没有绑定，使用 SET NX 绑定
+        // No binding, use SET NX to bind
         const key = `session:${sessionId}:provider`;
-        const result = await redis.set(key, newProviderId.toString(), "EX", this.SESSION_TTL, "NX");
+        const result = await memoryClient.set(key, newProviderId.toString(), "EX", this.SESSION_TTL, "NX");
 
         if (result === "OK") {
           logger.info("SessionManager: Bound session (no previous binding)", {
@@ -493,31 +490,31 @@ export class SessionManager {
           return {
             updated: true,
             reason: "no_previous_binding",
-            details: `无绑定，绑定到供应商 ${newProviderId} (priority=${newProviderPriority})`,
+            details: `No binding, bound to provider ${newProviderId} (priority=${newProviderPriority})`,
           };
         } else {
           return {
             updated: false,
             reason: "concurrent_binding_exists",
-            details: "并发请求已绑定",
+            details: "Concurrent request already bound",
           };
         }
       }
 
       const currentProviderId = parseInt(currentProviderIdStr, 10);
       if (isNaN(currentProviderId)) {
-        logger.warn("SessionManager: Invalid provider ID in Redis", { currentProviderIdStr });
+        logger.warn("SessionManager: Invalid provider ID in cache", { currentProviderIdStr });
         return { updated: false, reason: "invalid_provider_id" };
       }
 
-      // 2.2 查询当前供应商的详情（优先级 + 健康状态）
+      // 2.2 Query current provider details (priority + health status)
       const { findProviderById } = await import("@/repository/provider");
       const currentProvider = await findProviderById(currentProviderId);
 
       if (!currentProvider) {
-        // 当前供应商不存在（可能被删除），直接更新
+        // Current provider doesn't exist (might be deleted), update directly
         const key = `session:${sessionId}:provider`;
-        await redis.setex(key, this.SESSION_TTL, newProviderId.toString());
+        await memoryClient.setex(key, this.SESSION_TTL, newProviderId.toString());
 
         logger.info("SessionManager: Updated binding (current provider not found)", {
           sessionId,
@@ -529,18 +526,18 @@ export class SessionManager {
         return {
           updated: true,
           reason: "current_provider_not_found",
-          details: `原供应商 ${currentProviderId} 不存在，更新到 ${newProviderId}`,
+          details: `Original provider ${currentProviderId} not found, updated to ${newProviderId}`,
         };
       }
 
       const currentPriority = currentProvider.priority || 0;
 
-      // 2.3 智能决策：优先级比较 + 健康检查
+      // 2.3 Smart decision: priority comparison + health check
 
-      // ========== 规则 A：新供应商优先级更高（数字更小）→ 直接迁移 ==========
+      // ========== Rule A: New provider has higher priority (smaller number) -> migrate ==========
       if (newProviderPriority < currentPriority) {
         const key = `session:${sessionId}:provider`;
-        await redis.setex(key, this.SESSION_TTL, newProviderId.toString());
+        await memoryClient.setex(key, this.SESSION_TTL, newProviderId.toString());
 
         logger.info("SessionManager: Migrated to higher priority provider", {
           sessionId,
@@ -554,18 +551,18 @@ export class SessionManager {
         return {
           updated: true,
           reason: "priority_upgrade",
-          details: `优先级升级：从供应商 ${currentProvider.name} (priority=${currentPriority}) 迁移到 ${newProviderId} (priority=${newProviderPriority})`,
+          details: `Priority upgrade: from provider ${currentProvider.name} (priority=${currentPriority}) to ${newProviderId} (priority=${newProviderPriority})`,
         };
       }
 
-      // ========== 规则 B：新供应商优先级相同或更低 → 检查原供应商健康状态 ==========
+      // ========== Rule B: New provider has same/lower priority -> check health ==========
       const { isCircuitOpen } = await import("@/lib/circuit-breaker");
       const isCurrentCircuitOpen = await isCircuitOpen(currentProviderId);
 
       if (isCurrentCircuitOpen) {
-        // 原供应商已熔断 → 更新到新供应商（备用供应商接管）
+        // Original provider circuit is open -> switch to new provider
         const key = `session:${sessionId}:provider`;
-        await redis.setex(key, this.SESSION_TTL, newProviderId.toString());
+        await memoryClient.setex(key, this.SESSION_TTL, newProviderId.toString());
 
         logger.info("SessionManager: Migrated to backup provider (circuit open)", {
           sessionId,
@@ -579,11 +576,11 @@ export class SessionManager {
         return {
           updated: true,
           reason: "circuit_open_fallback",
-          details: `原供应商 ${currentProvider.name} (priority=${currentPriority}) 已熔断，切换到供应商 ${newProviderId} (priority=${newProviderPriority})`,
+          details: `Original provider ${currentProvider.name} (priority=${currentPriority}) circuit open, switched to ${newProviderId} (priority=${newProviderPriority})`,
         };
       }
 
-      // 原供应商健康 + 优先级更高/相同 → 保持原绑定（尽量使用主供应商）
+      // Original provider healthy + higher/same priority -> keep original binding
       logger.debug("SessionManager: Keeping current provider (healthy and higher/equal priority)", {
         sessionId,
         currentProviderId,
@@ -596,7 +593,7 @@ export class SessionManager {
       return {
         updated: false,
         reason: "keep_healthy_higher_priority",
-        details: `保持原供应商 ${currentProvider.name} (priority=${currentPriority}, 健康)，拒绝供应商 ${newProviderId} (priority=${newProviderPriority})`,
+        details: `Keeping provider ${currentProvider.name} (priority=${currentPriority}, healthy), rejected ${newProviderId} (priority=${newProviderPriority})`,
       };
     } catch (error) {
       logger.error("SessionManager: Failed to update session binding", { error });
@@ -608,11 +605,11 @@ export class SessionManager {
    * 存储 session 基础信息（请求开始时调用）
    */
   static async storeSessionInfo(sessionId: string, info: SessionStoreInfo): Promise<void> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return;
 
     try {
-      const pipeline = redis.pipeline();
+      const pipeline = memoryClient.pipeline();
 
       // 存储详细信息到 Hash
       pipeline.hset(`session:${sessionId}:info`, {
@@ -643,11 +640,11 @@ export class SessionManager {
     sessionId: string,
     providerInfo: SessionProviderInfo
   ): Promise<void> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return;
 
     try {
-      const pipeline = redis.pipeline();
+      const pipeline = memoryClient.pipeline();
 
       // 更新 info Hash 中的 provider 字段
       pipeline.hset(`session:${sessionId}:info`, {
@@ -672,11 +669,11 @@ export class SessionManager {
    * 更新 session 使用量和状态（响应完成时调用）
    */
   static async updateSessionUsage(sessionId: string, usage: SessionUsageUpdate): Promise<void> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return;
 
     try {
-      const pipeline = redis.pipeline();
+      const pipeline = memoryClient.pipeline();
 
       // 存储使用量到单独的 Hash
       const usageData: Record<string, string> = {
@@ -730,12 +727,12 @@ export class SessionManager {
       return;
     }
 
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return;
 
     try {
       const messagesJson = JSON.stringify(messages);
-      await redis.setex(`session:${sessionId}:messages`, this.SESSION_TTL, messagesJson);
+      await memoryClient.setex(`session:${sessionId}:messages`, this.SESSION_TTL, messagesJson);
       logger.trace("SessionManager: Stored session messages", { sessionId });
     } catch (error) {
       logger.error("SessionManager: Failed to store session messages", { error });
@@ -743,7 +740,7 @@ export class SessionManager {
   }
 
   /**
-   * 辅助方法：从 Redis Hash 数据构建 ActiveSessionInfo 对象
+   * 辅助方法：从 Hash 数据构建 ActiveSessionInfo 对象
    *
    * @private
    */
@@ -800,14 +797,14 @@ export class SessionManager {
    * 获取活跃 session 列表（用于实时监控页面）
    */
   static async getActiveSessions(): Promise<ActiveSessionInfo[]> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") {
-      logger.warn("SessionManager: Redis not ready, returning empty list");
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") {
+      logger.warn("SessionManager: Memory store not ready, returning empty list");
       return [];
     }
 
     try {
-      // 1. 使用 SessionTracker 获取活跃 session ID（自动兼容 ZSET/Set）
+      // 1. 使用 SessionTracker 获取活跃 session ID
       const sessionIds = await SessionTracker.getActiveSessions();
       if (sessionIds.length === 0) {
         return [];
@@ -817,7 +814,7 @@ export class SessionManager {
 
       // 2. 批量获取 session 详细信息
       const sessions: ActiveSessionInfo[] = [];
-      const pipeline = redis.pipeline();
+      const pipeline = memoryClient.pipeline();
 
       for (const sessionId of sessionIds) {
         pipeline.hgetall(`session:${sessionId}:info`);
@@ -865,7 +862,7 @@ export class SessionManager {
   /**
    * 获取所有 session（包括非活跃的）
    *
-   * 使用 SCAN 扫描 Redis 中所有 session:*:info key，
+   * 使用 scan 扫描所有 session:*:info key，
    * 按最后活跃时间分为活跃（5 分钟内）和非活跃两组。
    *
    * @returns { active: 活跃 session 列表, inactive: 非活跃 session 列表 }
@@ -874,9 +871,9 @@ export class SessionManager {
     active: ActiveSessionInfo[];
     inactive: ActiveSessionInfo[];
   }> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") {
-      logger.warn("SessionManager: Redis not ready, returning empty lists");
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") {
+      logger.warn("SessionManager: Memory store not ready, returning empty lists");
       return { active: [], inactive: [] };
     }
 
@@ -884,24 +881,24 @@ export class SessionManager {
       const now = Date.now();
       const fiveMinutesAgo = now - this.SESSION_TTL * 1000; // SESSION_TTL 是秒，转为毫秒
 
-      // 1. 使用 SCAN 扫描所有 session:*:info key
+      // 1. 使用 scan 扫描所有 session:*:info key
       const allSessions: ActiveSessionInfo[] = [];
       let cursor = "0";
 
       do {
-        const [nextCursor, keys] = (await redis.scan(
+        const [nextCursor, keys] = await memoryClient.scan(
           cursor,
           "MATCH",
           "session:*:info",
           "COUNT",
           100
-        )) as [string, string[]];
+        );
 
         cursor = nextCursor;
 
         if (keys.length > 0) {
           // 2. 批量获取 session info 和 usage
-          const pipeline = redis.pipeline();
+          const pipeline = memoryClient.pipeline();
 
           for (const key of keys) {
             pipeline.hgetall(key);
@@ -973,9 +970,9 @@ export class SessionManager {
    * @returns session ID 数组
    */
   static async getAllSessionIds(): Promise<string[]> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") {
-      logger.warn("SessionManager: Redis not ready, returning empty list");
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") {
+      logger.warn("SessionManager: Memory store not ready, returning empty list");
       return [];
     }
 
@@ -984,13 +981,13 @@ export class SessionManager {
       let cursor = "0";
 
       do {
-        const [nextCursor, keys] = (await redis.scan(
+        const [nextCursor, keys] = await memoryClient.scan(
           cursor,
           "MATCH",
           "session:*:info",
           "COUNT",
           100
-        )) as [string, string[]];
+        );
 
         cursor = nextCursor;
 
@@ -1021,11 +1018,11 @@ export class SessionManager {
       return null;
     }
 
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return null;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return null;
 
     try {
-      const messagesJson = await redis.get(`session:${sessionId}:messages`);
+      const messagesJson = await memoryClient.get(`session:${sessionId}:messages`);
       if (!messagesJson) {
         return null;
       }
@@ -1043,12 +1040,12 @@ export class SessionManager {
    * @param response - 响应体内容（字符串或对象）
    */
   static async storeSessionResponse(sessionId: string, response: string | object): Promise<void> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return;
 
     try {
       const responseString = typeof response === "string" ? response : JSON.stringify(response);
-      await redis.setex(`session:${sessionId}:response`, this.SESSION_TTL, responseString);
+      await memoryClient.setex(`session:${sessionId}:response`, this.SESSION_TTL, responseString);
       logger.trace("SessionManager: Stored session response", {
         sessionId,
         size: responseString.length,
@@ -1065,11 +1062,11 @@ export class SessionManager {
    * @returns 响应体内容（字符串）
    */
   static async getSessionResponse(sessionId: string): Promise<string | null> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return null;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return null;
 
     try {
-      const response = await redis.get(`session:${sessionId}:response`);
+      const response = await memoryClient.get(`session:${sessionId}:response`);
       return response;
     } catch (error) {
       logger.error("SessionManager: Failed to get session response", { error });

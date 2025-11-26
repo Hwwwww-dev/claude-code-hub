@@ -34,7 +34,7 @@ export async function register() {
     // Skip initialization in CI environment (no DB connection needed)
     if (process.env.CI === "true") {
       logger.warn(
-        "[Instrumentation] CI environment detected: skipping DB migrations, price seeding and queue scheduling"
+        "[Instrumentation] CI environment detected: skipping DB migrations, price seeding, and job scheduling"
       );
       return;
     }
@@ -80,7 +80,7 @@ export async function register() {
 
       logger.info("Application ready");
     }
-    // 开发环境: 执行迁移 + 初始化价格表（禁用 Bull Queue 避免 Turbopack 冲突）
+    // 开发环境: 执行迁移 + 初始化价格表（禁用定时任务避免 Turbopack 冲突）
     else if (process.env.NODE_ENV === "development") {
       logger.info("Development mode: running migrations and initializing price table");
 
@@ -108,11 +108,11 @@ export async function register() {
         // 继续启动 - 错误检测不是核心功能的关键依赖
       }
 
-      // ⚠️ 开发环境禁用通知队列（Bull + Turbopack 不兼容）
+      // 开发环境禁用定时任务（避免 Turbopack 冲突）
       // 通知功能仅在生产环境可用，开发环境需要手动测试
       logger.warn(
-        "Notification queue disabled in development mode due to Bull + Turbopack incompatibility. " +
-          "Notification features are only available in production environment."
+        "Scheduled jobs disabled in development mode. " +
+          "Notification and cleanup features are only available in production environment."
       );
 
       logger.info("Development environment ready");

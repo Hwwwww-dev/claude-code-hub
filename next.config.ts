@@ -11,13 +11,8 @@ const nextConfig: NextConfig = {
   transpilePackages: ["@lobehub/icons"],
 
   // 排除服务端专用包（避免打包到客户端）
-  // bull 和相关依赖只在服务端使用，包含 Node.js 原生模块
   // postgres 和 drizzle-orm 包含 Node.js 原生模块（net, tls, crypto, stream, perf_hooks）
   serverExternalPackages: [
-    "bull",
-    "bullmq",
-    "@bull-board/api",
-    "@bull-board/express",
     "ioredis",
     "postgres",
     "drizzle-orm",

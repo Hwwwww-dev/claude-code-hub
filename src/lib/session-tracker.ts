@@ -1,4 +1,4 @@
-import { getRedisClient } from "./redis";
+import { getMemoryClient } from "./memory-cache";
 import { logger } from "@/lib/logger";
 
 /**
@@ -19,38 +19,20 @@ export class SessionTracker {
   private static readonly SESSION_TTL = 300000; // 5 分钟（毫秒）
 
   /**
-   * 初始化 SessionTracker，自动清理旧格式数据
+   * 初始化 SessionTracker
    *
-   * 应在应用启动时调用一次，清理 global:active_sessions 的旧 Set 数据。
-   * 其他 key（provider:*、key:*）在运行时自动清理。
+   * 应在应用启动时调用一次。
+   * 对于 InMemoryStore，所有数据结构都是新的，无需清理旧格式。
    */
   static async initialize(): Promise<void> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") {
-      logger.warn("SessionTracker: Redis not ready, skipping initialization");
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") {
+      logger.warn("SessionTracker: Memory store not ready, skipping initialization");
       return;
     }
 
-    try {
-      const key = "global:active_sessions";
-      const exists = await redis.exists(key);
-
-      if (exists === 1) {
-        const type = await redis.type(key);
-
-        if (type !== "zset") {
-          logger.warn("SessionTracker: Found legacy format, deleting", { key, type });
-          await redis.del(key);
-          logger.debug("SessionTracker: Deleted legacy key", { key });
-        } else {
-          logger.trace("SessionTracker: Key is already ZSET format", { key });
-        }
-      } else {
-        logger.trace("SessionTracker: Key does not exist, will be created on first use", { key });
-      }
-    } catch (error) {
-      logger.error("SessionTracker: Initialization failed", { error });
-    }
+    // InMemoryStore uses native ZSET implementation, no legacy format cleanup needed
+    logger.trace("SessionTracker: Initialized with InMemoryStore");
   }
 
   /**
@@ -62,12 +44,12 @@ export class SessionTracker {
    * @param keyId - API Key ID
    */
   static async trackSession(sessionId: string, keyId: number): Promise<void> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return;
 
     try {
       const now = Date.now();
-      const pipeline = redis.pipeline();
+      const pipeline = memoryClient.pipeline();
 
       // 添加到全局集合（ZSET）
       pipeline.zadd("global:active_sessions", now, sessionId);
@@ -79,17 +61,11 @@ export class SessionTracker {
 
       const results = await pipeline.exec();
 
-      // 检查执行结果，捕获类型冲突错误
+      // 检查执行结果
       if (results) {
         for (const [err] of results) {
           if (err) {
             logger.error("SessionTracker: Pipeline command failed", { error: err });
-            // 如果是类型冲突（WRONGTYPE），自动修复
-            if (err.message?.includes("WRONGTYPE")) {
-              logger.warn("SessionTracker: Type conflict detected, auto-fixing");
-              await this.initialize(); // 重新初始化，清理旧数据
-              return; // 本次追踪失败，下次请求会成功
-            }
           }
         }
       }
@@ -109,12 +85,12 @@ export class SessionTracker {
    * @param providerId - Provider ID
    */
   static async updateProvider(sessionId: string, providerId: number): Promise<void> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return;
 
     try {
       const now = Date.now();
-      const pipeline = redis.pipeline();
+      const pipeline = memoryClient.pipeline();
 
       // 更新全局集合时间戳
       pipeline.zadd("global:active_sessions", now, sessionId);
@@ -125,16 +101,11 @@ export class SessionTracker {
 
       const results = await pipeline.exec();
 
-      // 检查执行结果，捕获类型冲突错误
+      // 检查执行结果
       if (results) {
         for (const [err] of results) {
           if (err) {
             logger.error("SessionTracker: Pipeline command failed", { error: err });
-            if (err.message?.includes("WRONGTYPE")) {
-              logger.warn("SessionTracker: Type conflict detected, auto-fixing");
-              await this.initialize();
-              return;
-            }
           }
         }
       }
@@ -155,42 +126,31 @@ export class SessionTracker {
    * @param providerId - Provider ID
    */
   static async refreshSession(sessionId: string, keyId: number, providerId: number): Promise<void> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return;
 
     try {
       const now = Date.now();
-      const pipeline = redis.pipeline();
+      const pipeline = memoryClient.pipeline();
 
       // 更新所有相关 ZSET 的时间戳（滑动窗口）
       pipeline.zadd("global:active_sessions", now, sessionId);
       pipeline.zadd(`key:${keyId}:active_sessions`, now, sessionId);
       pipeline.zadd(`provider:${providerId}:active_sessions`, now, sessionId);
 
-      // 修复 Bug：同步刷新 session 绑定信息的 TTL
-      //
-      // 问题：ZSET 条目（上面 zadd）会在每次请求时更新时间戳，但绑定信息 key 的 TTL 不会自动刷新
-      // 导致：session 创建 5 分钟后，ZSET 仍有记录（仍被计为活跃），但绑定信息已过期，造成：
-      //   1. 并发检查被绕过（无法从绑定信息查询 session 所属 provider/key，检查失效）
-      //   2. Session 复用失败（无法确定 session 绑定关系，被迫创建新 session）
-      //
-      // 解决：每次 refreshSession 时同步刷新绑定信息 TTL（与 ZSET 保持 5 分钟生命周期一致）
+      // 同步刷新 session 绑定信息的 TTL
+      // 确保 ZSET 和绑定信息保持 5 分钟生命周期一致
       pipeline.expire(`session:${sessionId}:provider`, 300); // 5 分钟（秒）
       pipeline.expire(`session:${sessionId}:key`, 300);
       pipeline.setex(`session:${sessionId}:last_seen`, 300, now.toString());
 
       const results = await pipeline.exec();
 
-      // 检查执行结果，捕获类型冲突错误
+      // 检查执行结果
       if (results) {
         for (const [err] of results) {
           if (err) {
             logger.error("SessionTracker: Pipeline command failed", { error: err });
-            if (err.message?.includes("WRONGTYPE")) {
-              logger.warn("SessionTracker: Type conflict detected, auto-fixing");
-              await this.initialize();
-              return;
-            }
           }
         }
       }
@@ -207,26 +167,12 @@ export class SessionTracker {
    * @returns 活跃 session 数量
    */
   static async getGlobalSessionCount(): Promise<number> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return 0;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return 0;
 
     try {
       const key = "global:active_sessions";
-      const exists = await redis.exists(key);
-
-      if (exists === 1) {
-        const type = await redis.type(key);
-
-        if (type !== "zset") {
-          logger.warn("SessionTracker: Key is not ZSET, deleting", { key, type });
-          await redis.del(key);
-          return 0;
-        }
-
-        return await this.countFromZSet(key);
-      }
-
-      return 0;
+      return await this.countFromZSet(key);
     } catch (error) {
       logger.error("SessionTracker: Failed to get global session count", { error });
       return 0; // Fail Open
@@ -240,26 +186,12 @@ export class SessionTracker {
    * @returns 活跃 session 数量
    */
   static async getKeySessionCount(keyId: number): Promise<number> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return 0;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return 0;
 
     try {
       const key = `key:${keyId}:active_sessions`;
-      const exists = await redis.exists(key);
-
-      if (exists === 1) {
-        const type = await redis.type(key);
-
-        if (type !== "zset") {
-          logger.warn("SessionTracker: Key is not ZSET, deleting", { key, type });
-          await redis.del(key);
-          return 0;
-        }
-
-        return await this.countFromZSet(key);
-      }
-
-      return 0;
+      return await this.countFromZSet(key);
     } catch (error) {
       logger.error("SessionTracker: Failed to get key session count", { error, keyId });
       return 0;
@@ -273,26 +205,12 @@ export class SessionTracker {
    * @returns 活跃 session 数量
    */
   static async getProviderSessionCount(providerId: number): Promise<number> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return 0;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return 0;
 
     try {
       const key = `provider:${providerId}:active_sessions`;
-      const exists = await redis.exists(key);
-
-      if (exists === 1) {
-        const type = await redis.type(key);
-
-        if (type !== "zset") {
-          logger.warn("SessionTracker: Key is not ZSET, deleting", { key, type });
-          await redis.del(key);
-          return 0;
-        }
-
-        return await this.countFromZSet(key);
-      }
-
-      return 0;
+      return await this.countFromZSet(key);
     } catch (error) {
       logger.error("SessionTracker: Failed to get provider session count", { error, providerId });
       return 0;
@@ -305,33 +223,19 @@ export class SessionTracker {
    * @returns Session ID 数组
    */
   static async getActiveSessions(): Promise<string[]> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return [];
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return [];
 
     try {
       const key = "global:active_sessions";
-      const exists = await redis.exists(key);
+      const now = Date.now();
+      const fiveMinutesAgo = now - this.SESSION_TTL;
 
-      if (exists === 1) {
-        const type = await redis.type(key);
+      // 清理过期 session
+      await memoryClient.zremrangebyscore(key, -Infinity, fiveMinutesAgo);
 
-        if (type !== "zset") {
-          logger.warn("SessionTracker: Key is not ZSET, deleting", { key, type });
-          await redis.del(key);
-          return [];
-        }
-
-        const now = Date.now();
-        const fiveMinutesAgo = now - this.SESSION_TTL;
-
-        // 清理过期 session
-        await redis.zremrangebyscore(key, "-inf", fiveMinutesAgo);
-
-        // 获取剩余的 session ID
-        return await redis.zrange(key, 0, -1);
-      }
-
-      return [];
+      // 获取剩余的 session ID
+      return (await memoryClient.zrange(key, 0, -1)) as string[];
     } catch (error) {
       logger.error("SessionTracker: Failed to get active sessions", { error });
       return [];
@@ -339,7 +243,7 @@ export class SessionTracker {
   }
 
   /**
-   * 从 ZSET 计数（新格式）
+   * 从 ZSET 计数
    *
    * 实现步骤：
    * 1. ZREMRANGEBYSCORE 清理过期 session（5 分钟前）
@@ -347,26 +251,26 @@ export class SessionTracker {
    * 3. 批量 EXISTS 验证 session:${sessionId}:info 是否存在
    * 4. 统计真实存在的 session
    *
-   * @param key - Redis key
+   * @param key - Memory cache key
    * @returns 有效 session 数量
    */
   private static async countFromZSet(key: string): Promise<number> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return 0;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return 0;
 
     try {
       const now = Date.now();
       const fiveMinutesAgo = now - this.SESSION_TTL;
 
       // 1. 清理过期 session（5 分钟前）
-      await redis.zremrangebyscore(key, "-inf", fiveMinutesAgo);
+      await memoryClient.zremrangebyscore(key, -Infinity, fiveMinutesAgo);
 
       // 2. 获取剩余的 session ID
-      const sessionIds = await redis.zrange(key, 0, -1);
+      const sessionIds = (await memoryClient.zrange(key, 0, -1)) as string[];
       if (sessionIds.length === 0) return 0;
 
       // 3. 批量验证 info 是否存在
-      const pipeline = redis.pipeline();
+      const pipeline = memoryClient.pipeline();
       for (const sessionId of sessionIds) {
         pipeline.exists(`session:${sessionId}:info`);
       }
@@ -401,13 +305,13 @@ export class SessionTracker {
    * @param sessionId - Session ID
    */
   static async incrementConcurrentCount(sessionId: string): Promise<void> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return;
 
     try {
       const key = `session:${sessionId}:concurrent_count`;
-      await redis.incr(key);
-      await redis.expire(key, 600); // 10 分钟 TTL（比 session TTL 长一倍，防止计数泄漏）
+      await memoryClient.incr(key);
+      await memoryClient.expire(key, 600); // 10 分钟 TTL（比 session TTL 长一倍，防止计数泄漏）
 
       logger.trace("SessionTracker: Incremented concurrent count", { sessionId });
     } catch (error) {
@@ -423,16 +327,16 @@ export class SessionTracker {
    * @param sessionId - Session ID
    */
   static async decrementConcurrentCount(sessionId: string): Promise<void> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") return;
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") return;
 
     try {
       const key = `session:${sessionId}:concurrent_count`;
-      const newCount = await redis.decr(key);
+      const newCount = await memoryClient.decr(key);
 
       // 如果计数降到 0 或负数，删除 key（避免无用 key 堆积）
       if (newCount <= 0) {
-        await redis.del(key);
+        await memoryClient.del(key);
       }
 
       logger.trace("SessionTracker: Decremented concurrent count", { sessionId, newCount });
@@ -450,15 +354,15 @@ export class SessionTracker {
    * @returns 并发请求数量
    */
   static async getConcurrentCount(sessionId: string): Promise<number> {
-    const redis = getRedisClient();
-    if (!redis || redis.status !== "ready") {
-      logger.trace("SessionTracker: Redis not ready, returning 0 for concurrent count");
+    const memoryClient = getMemoryClient();
+    if (!memoryClient || memoryClient.status !== "ready") {
+      logger.trace("SessionTracker: Memory store not ready, returning 0 for concurrent count");
       return 0;
     }
 
     try {
       const key = `session:${sessionId}:concurrent_count`;
-      const count = await redis.get(key);
+      const count = await memoryClient.get(key);
 
       const result = count ? parseInt(count, 10) : 0;
       logger.trace("SessionTracker: Got concurrent count", { sessionId, count: result });

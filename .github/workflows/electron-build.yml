@@ -1,0 +1,98 @@
+name: Electron Build
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - 'electron-*'
+    paths:
+      - 'electron/**'
+      - 'src/**'
+      - 'package.json'
+      - 'electron-builder.yml'
+      - '.github/workflows/electron-*.yml'
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - 'electron/**'
+      - 'src/**'
+      - 'package.json'
+      - 'electron-builder.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            artifact_ext: AppImage
+          - os: windows-latest
+            platform: win
+            artifact_ext: exe
+          - os: macos-latest
+            platform: mac
+            artifact_ext: dmg
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.2'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build Next.js
+        run: bun run build
+
+      - name: Compile Electron TypeScript
+        run: npx tsc -p tsconfig.electron.json
+
+      - name: Build Electron (${{ matrix.platform }})
+        run: bun run electron:ci:${{ matrix.platform }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS code signing (configure secrets for production)
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows code signing (configure secrets for production)
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-build
+          path: |
+            dist-electron/*.dmg
+            dist-electron/*.zip
+            dist-electron/*.exe
+            dist-electron/*.AppImage
+            dist-electron/*.deb
+            dist-electron/*.rpm
+            dist-electron/*.blockmap
+          retention-days: 14
+          if-no-files-found: warn
