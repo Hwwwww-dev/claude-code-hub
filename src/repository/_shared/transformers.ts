@@ -3,6 +3,7 @@ import type { Key } from "@/types/key";
 import type { MessageRequest } from "@/types/message";
 import type { ModelPrice } from "@/types/model-price";
 import type { Provider } from "@/types/provider";
+import type { ProviderEndpoint } from "@/types/provider-endpoint";
 import type { SystemSettings } from "@/types/system-config";
 import type { User } from "@/types/user";
 
@@ -65,6 +66,8 @@ export function toProvider(dbProvider: any): Provider {
     codexInstructionsStrategy: dbProvider?.codexInstructionsStrategy ?? "auto",
     mcpPassthroughType: dbProvider?.mcpPassthroughType ?? "none",
     mcpPassthroughUrl: dbProvider?.mcpPassthroughUrl ?? null,
+    endpointSelectionStrategy: dbProvider?.endpointSelectionStrategy ?? "failover",
+    useMultipleEndpoints: dbProvider?.useMultipleEndpoints ?? false,
     limit5hUsd: dbProvider?.limit5hUsd ? parseFloat(dbProvider.limit5hUsd) : null,
     limitDailyUsd: dbProvider?.limitDailyUsd ? parseFloat(dbProvider.limitDailyUsd) : null,
     dailyResetTime: dbProvider?.dailyResetTime ?? "00:00",
@@ -139,5 +142,22 @@ export function toSystemSettings(dbSettings: any): SystemSettings {
     enableHttp2: dbSettings?.enableHttp2 ?? false,
     createdAt: dbSettings?.createdAt ? new Date(dbSettings.createdAt) : new Date(),
     updatedAt: dbSettings?.updatedAt ? new Date(dbSettings.updatedAt) : new Date(),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function toProviderEndpoint(dbEndpoint: any): ProviderEndpoint {
+  return {
+    ...dbEndpoint,
+    apiKey: dbEndpoint?.apiKey ?? null,
+    priority: dbEndpoint?.priority ?? 0,
+    weight: dbEndpoint?.weight ?? 1,
+    isEnabled: dbEndpoint?.isEnabled ?? true,
+    healthStatus: dbEndpoint?.healthStatus ?? "unknown",
+    consecutiveFailures: dbEndpoint?.consecutiveFailures ?? 0,
+    lastFailureTime: dbEndpoint?.lastFailureTime ? new Date(dbEndpoint.lastFailureTime) : null,
+    lastSuccessTime: dbEndpoint?.lastSuccessTime ? new Date(dbEndpoint.lastSuccessTime) : null,
+    createdAt: dbEndpoint?.createdAt ? new Date(dbEndpoint.createdAt) : new Date(),
+    updatedAt: dbEndpoint?.updatedAt ? new Date(dbEndpoint.updatedAt) : new Date(),
   };
 }

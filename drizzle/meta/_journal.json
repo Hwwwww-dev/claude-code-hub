@@ -239,6 +239,13 @@
       "when": 1765176000000,
       "tag": "0033_preserve_client_ip",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1765526799669,
+      "tag": "0034_round_the_fury",
+      "breakpoints": true
     }
   ]
 }

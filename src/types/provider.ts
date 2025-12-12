@@ -1,5 +1,6 @@
 // 供应商类型枚举
 import type { CacheTtlPreference } from "./cache";
+import type { EndpointHealthStatus, EndpointSelectionStrategy } from "./provider-endpoint";
 
 export type ProviderType =
   | "claude"
@@ -44,6 +45,10 @@ export interface Provider {
 
   // 加入 Claude 调度池：仅对非 Anthropic 提供商有效
   joinClaudePool: boolean;
+
+  // Endpoint 调度策略（多端点支持）
+  endpointSelectionStrategy: EndpointSelectionStrategy;
+  useMultipleEndpoints: boolean;
 
   // Codex Instructions 策略：控制如何处理 Codex 请求的 instructions 字段
   // 仅对 providerType = 'codex' 的供应商有效
@@ -107,6 +112,20 @@ export interface Provider {
   deletedAt?: Date;
 }
 
+// Provider Endpoint 显示信息（用于 UI 展示）
+export interface ProviderEndpointDisplay {
+  id: number;
+  name: string;
+  url: string;
+  maskedApiKey: string | null; // 遮罩后的 API Key
+  priority: number;
+  weight: number;
+  isEnabled: boolean;
+  healthStatus: EndpointHealthStatus;
+  consecutiveFailures: number;
+  lastHealthCheck: string | null; // 格式化后的时间
+}
+
 // 前端显示用的供应商类型（包含格式化后的数据）
 export interface ProviderDisplay {
   id: number;
@@ -128,6 +147,11 @@ export interface ProviderDisplay {
   allowedModels: string[] | null;
   // 加入 Claude 调度池
   joinClaudePool: boolean;
+  // Endpoint 调度策略（多端点支持）
+  endpointSelectionStrategy: EndpointSelectionStrategy;
+  useMultipleEndpoints: boolean;
+  // Endpoint 列表（可选，用于多端点管理）
+  endpoints?: ProviderEndpointDisplay[];
   // Codex Instructions 策略
   codexInstructionsStrategy: CodexInstructionsStrategy;
   // MCP 透传类型

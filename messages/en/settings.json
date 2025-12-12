@@ -515,6 +515,49 @@
     "addFailed": "Failed to add provider",
     "addProvider": "Add Provider",
     "addSuccess": "Provider added successfully",
+    "endpoints": {
+      "title": "Endpoints Configuration",
+      "enableMultiple": "Enable Multiple Endpoints",
+      "enableMultipleHint": "Configure multiple API addresses for load balancing or failover",
+      "strategy": {
+        "label": "Selection Strategy",
+        "failover": "Failover",
+        "failoverDesc": "Use by priority order, switch on failure",
+        "round_robin": "Round Robin",
+        "round_robinDesc": "Use endpoints in sequence",
+        "random": "Random",
+        "randomDesc": "Randomly select endpoint",
+        "weighted": "Weighted Random",
+        "weightedDesc": "Distribute requests by weight"
+      },
+      "list": {
+        "empty": "No endpoints configured",
+        "add": "Add Endpoint"
+      },
+      "form": {
+        "name": "Endpoint Name",
+        "namePlaceholder": "e.g., Primary-US",
+        "url": "API Address",
+        "apiKey": "API Key (optional)",
+        "apiKeyHint": "Leave empty to inherit provider key",
+        "priority": "Priority",
+        "priorityHint": "Lower value = higher priority (failover mode)",
+        "weight": "Weight",
+        "weightHint": "Higher value = more requests (weighted mode)",
+        "enabled": "Enabled",
+        "save": "Save Endpoint",
+        "cancel": "Cancel",
+        "delete": "Delete Endpoint",
+        "edit": "Edit Endpoint"
+      },
+      "health": {
+        "healthy": "Healthy",
+        "degraded": "Degraded",
+        "unhealthy": "Unhealthy",
+        "status": "Health Status",
+        "failures": "Consecutive Failures"
+      }
+    },
     "types": {
       "claude": {
         "label": "Claude",

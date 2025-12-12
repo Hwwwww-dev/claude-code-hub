@@ -12,6 +12,8 @@ import { CodexInstructionsCache } from "@/lib/codex-instructions-cache";
 import { isHttp2Enabled } from "@/lib/config";
 import { getEnvConfig } from "@/lib/config/env.schema";
 import { PROVIDER_DEFAULTS, PROVIDER_LIMITS } from "@/lib/constants/provider.constants";
+import { EndpointHealthTracker } from "@/lib/endpoint-health";
+import { EndpointSelector } from "@/lib/endpoint-selector";
 import { logger } from "@/lib/logger";
 import { createProxyAgentForProvider } from "@/lib/proxy-agent";
 import { SessionManager } from "@/lib/session-manager";
@@ -299,6 +301,19 @@ export class ProxyForwarder {
 
           // ========== 成功分支 ==========
           recordSuccess(currentProvider.id);
+
+          // ⭐ 记录端点成功（如果启用了多端点功能）
+          if (currentProvider.useMultipleEndpoints && session.getCurrentEndpoint()) {
+            const currentEndpoint = session.getCurrentEndpoint();
+            if (currentEndpoint) {
+              await EndpointHealthTracker.recordSuccess(currentEndpoint.id);
+              logger.debug("ProxyForwarder: Endpoint health recorded (success)", {
+                providerId: currentProvider.id,
+                endpointId: currentEndpoint.id,
+                endpointName: currentEndpoint.name,
+              });
+            }
+          }
 
           // ⭐ Phase 4: 成功响应后缓存 instructions（自动学习）
           if (
@@ -623,6 +638,27 @@ export class ProxyForwarder {
               // 记录到失败列表
               failedProviderIds.push(currentProvider.id);
 
+              // ⭐ 记录端点失败（如果启用了多端点功能）
+              if (currentProvider.useMultipleEndpoints && session.getCurrentEndpoint()) {
+                const currentEndpoint = session.getCurrentEndpoint();
+                if (currentEndpoint) {
+                  const newStatus = await EndpointHealthTracker.recordFailure(
+                    currentEndpoint.id,
+                    0 // consecutiveFailures 由 repository 自动查询
+                  );
+                  session.addExcludedEndpoint(currentEndpoint.id); // 排除失败的端点
+                  logger.debug(
+                    "ProxyForwarder: Endpoint health recorded (empty response failure)",
+                    {
+                      providerId: currentProvider.id,
+                      endpointId: currentEndpoint.id,
+                      endpointName: currentEndpoint.name,
+                      newStatus,
+                    }
+                  );
+                }
+              }
+
               // 获取熔断器健康信息
               const { health, config } = await getProviderHealthInfo(currentProvider.id);
 
@@ -775,6 +811,21 @@ export class ProxyForwarder {
 
             // 记录到失败列表（避免重新选择）
             failedProviderIds.push(currentProvider.id);
+
+            // ⭐ 记录端点失败（如果启用了多端点功能）
+            if (currentProvider.useMultipleEndpoints && session.getCurrentEndpoint()) {
+              const currentEndpoint = session.getCurrentEndpoint();
+              if (currentEndpoint) {
+                const newStatus = await EndpointHealthTracker.recordFailure(currentEndpoint.id, 0);
+                session.addExcludedEndpoint(currentEndpoint.id); // 排除失败的端点
+                logger.debug("ProxyForwarder: Endpoint health recorded (failure)", {
+                  providerId: currentProvider.id,
+                  endpointId: currentEndpoint.id,
+                  endpointName: currentEndpoint.name,
+                  newStatus,
+                });
+              }
+            }
 
             // 获取熔断器健康信息（用于决策链显示）
             const { health, config } = await getProviderHealthInfo(currentProvider.id);
@@ -1071,7 +1122,43 @@ export class ProxyForwarder {
         }
       }
 
-      processedHeaders = ProxyForwarder.buildHeaders(session, provider);
+      // ⭐ 多端点选择逻辑
+      let effectiveBaseUrl = provider.url;
+      let effectiveApiKey = provider.key;
+
+      // 检查是否启用多端点功能
+      if (provider.useMultipleEndpoints) {
+        // 1. 选择端点
+        const endpoint = await EndpointSelector.selectEndpoint(
+          provider,
+          session.getExcludedEndpointIds()
+        );
+
+        if (!endpoint) {
+          throw new ProxyError("No available endpoints", 503);
+        }
+
+        // 2. 记录到 session
+        session.setCurrentEndpoint({
+          id: endpoint.id,
+          name: endpoint.name,
+          url: endpoint.url,
+        });
+
+        // 3. 使用端点的 URL 和 API Key
+        effectiveBaseUrl = endpoint.url;
+        effectiveApiKey = endpoint.apiKey;
+
+        // 4. 记录日志
+        logger.debug("ProxyForwarder: Endpoint selected", {
+          providerId: provider.id,
+          endpointId: endpoint.id,
+          endpointName: endpoint.name,
+          strategy: provider.endpointSelectionStrategy,
+        });
+      }
+
+      processedHeaders = ProxyForwarder.buildHeaders(session, provider, effectiveApiKey);
 
       if (process.env.NODE_ENV === "development") {
         logger.trace("ProxyForwarder: Final request headers", {
@@ -1082,7 +1169,6 @@ export class ProxyForwarder {
       }
 
       // ⭐ MCP 透传处理：检测是否为 MCP 请求，并使用相应的 URL
-      let effectiveBaseUrl = provider.url;
 
       // 检测是否为 MCP 请求（非标准 Claude/Codex/OpenAI 端点）
       const requestPath = session.requestUrl.pathname;
@@ -1735,9 +1821,10 @@ export class ProxyForwarder {
 
   private static buildHeaders(
     session: ProxySession,
-    provider: NonNullable<typeof session.provider>
+    provider: NonNullable<typeof session.provider>,
+    apiKey?: string
   ): Headers {
-    const outboundKey = provider.key;
+    const outboundKey = apiKey ?? provider.key;
     const preserveClientIp = provider.preserveClientIp ?? false;
     const { clientIp, xForwardedFor } = ProxyForwarder.resolveClientIp(session.headers);
 

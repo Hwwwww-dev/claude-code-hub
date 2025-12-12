@@ -16,6 +16,12 @@ import { relations, sql } from 'drizzle-orm';
 
 // Enums
 export const dailyResetModeEnum = pgEnum('daily_reset_mode', ['fixed', 'rolling']);
+export const endpointSelectionStrategyEnum = pgEnum('endpoint_selection_strategy', [
+  'failover',
+  'round_robin',
+  'random',
+  'weighted',
+]);
 
 // Users table
 export const users = pgTable('users', {
@@ -210,6 +216,12 @@ export const providers = pgTable('providers', {
   // Cache TTL override（null = 不覆写，沿用客户端请求）
   cacheTtlPreference: varchar('cache_ttl_preference', { length: 10 }),
 
+  // 多端点配置
+  endpointSelectionStrategy: endpointSelectionStrategyEnum('endpoint_selection_strategy')
+    .default('failover')
+    .notNull(),
+  useMultipleEndpoints: boolean('use_multiple_endpoints').default(false),
+
   // 废弃（保留向后兼容，但不再使用）
   tpm: integer('tpm').default(0),
   rpm: integer('rpm').default(0),
@@ -227,6 +239,35 @@ export const providers = pgTable('providers', {
   // 基础索引
   providersCreatedAtIdx: index('idx_providers_created_at').on(table.createdAt),
   providersDeletedAtIdx: index('idx_providers_deleted_at').on(table.deletedAt),
+}));
+
+// Provider Endpoints table
+export const providerEndpoints = pgTable('provider_endpoints', {
+  id: serial('id').primaryKey(),
+  providerId: integer('provider_id')
+    .notNull()
+    .references(() => providers.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 100 }).notNull(),
+  url: varchar('url', { length: 512 }).notNull(),
+  apiKey: varchar('api_key', { length: 512 }),
+  priority: integer('priority').notNull().default(0),
+  weight: integer('weight').notNull().default(1),
+  isEnabled: boolean('is_enabled').notNull().default(true),
+  healthStatus: varchar('health_status', { length: 20 }).default('healthy'),
+  consecutiveFailures: integer('consecutive_failures').notNull().default(0),
+  lastFailureTime: timestamp('last_failure_time', { withTimezone: true }),
+  lastSuccessTime: timestamp('last_success_time', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+}, (table) => ({
+  // 优化启用状态的端点查询（按优先级排序）
+  providerEndpointsProviderPriorityIdx: index('idx_provider_endpoints_provider_priority')
+    .on(table.providerId, table.isEnabled, table.priority),
+  // 健康状态查询索引
+  providerEndpointsHealthIdx: index('idx_provider_endpoints_health')
+    .on(table.providerId, table.healthStatus),
+  // 基础索引
+  providerEndpointsProviderIdIdx: index('idx_provider_endpoints_provider_id').on(table.providerId),
 }));
 
 // Message Request table
@@ -465,6 +506,14 @@ export const keysRelations = relations(keys, ({ one, many }) => ({
 
 export const providersRelations = relations(providers, ({ many }) => ({
   messageRequests: many(messageRequest),
+  endpoints: many(providerEndpoints),
+}));
+
+export const providerEndpointsRelations = relations(providerEndpoints, ({ one }) => ({
+  provider: one(providers, {
+    fields: [providerEndpoints.providerId],
+    references: [providers.id],
+  }),
 }));
 
 export const messageRequestRelations = relations(messageRequest, ({ one }) => ({

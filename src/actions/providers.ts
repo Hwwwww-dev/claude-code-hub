@@ -34,8 +34,14 @@ import {
   getProviderStatistics,
   updateProvider,
 } from "@/repository/provider";
+import {
+  createEndpoint,
+  deleteEndpoint,
+  findEndpointsByProviderId,
+} from "@/repository/provider-endpoint";
 import type { CacheTtlPreference } from "@/types/cache";
 import type { ProviderDisplay, ProviderType } from "@/types/provider";
+import type { CreateProviderEndpointData } from "@/types/provider-endpoint";
 import type { ActionResult } from "./types";
 
 const API_TEST_TIMEOUT_LIMITS = {
@@ -185,6 +191,8 @@ export async function getProviders(): Promise<ProviderDisplay[]> {
         modelRedirects: provider.modelRedirects,
         allowedModels: provider.allowedModels,
         joinClaudePool: provider.joinClaudePool,
+        endpointSelectionStrategy: provider.endpointSelectionStrategy,
+        useMultipleEndpoints: provider.useMultipleEndpoints,
         codexInstructionsStrategy: provider.codexInstructionsStrategy,
         mcpPassthroughType: provider.mcpPassthroughType,
         mcpPassthroughUrl: provider.mcpPassthroughUrl,
@@ -230,6 +238,99 @@ export async function getProviders(): Promise<ProviderDisplay[]> {
     });
     logger.error("获取服务商数据失败:", error);
     return [];
+  }
+}
+
+/**
+ * 获取单个供应商详情（包含端点信息）
+ * @param providerId 供应商ID
+ * @returns 供应商详情（包含遮罩后的端点信息）
+ */
+export async function getProviderWithEndpoints(
+  providerId: number
+): Promise<ActionResult<ProviderDisplay>> {
+  try {
+    const session = await getSession();
+    if (!session || session.user.role !== "admin") {
+      return { ok: false, error: "无权限执行此操作" };
+    }
+
+    const provider = await findProviderById(providerId);
+    if (!provider) {
+      return { ok: false, error: "供应商不存在" };
+    }
+
+    // 获取端点列表
+    const endpoints = await findEndpointsByProviderId(providerId);
+
+    // 格式化端点信息（遮罩 API Key）
+    const formattedEndpoints = endpoints.map((endpoint) => ({
+      id: endpoint.id,
+      name: endpoint.name,
+      url: endpoint.url,
+      maskedApiKey: endpoint.apiKey ? maskKey(endpoint.apiKey) : null,
+      priority: endpoint.priority,
+      weight: endpoint.weight,
+      isEnabled: endpoint.isEnabled,
+      healthStatus: endpoint.healthStatus,
+      consecutiveFailures: endpoint.consecutiveFailures,
+      lastHealthCheck: endpoint.lastSuccessTime?.toISOString() ?? null,
+    }));
+
+    // 构造返回的 ProviderDisplay 对象
+    const providerDisplay: ProviderDisplay = {
+      id: provider.id,
+      name: provider.name,
+      url: provider.url,
+      maskedKey: maskKey(provider.key),
+      isEnabled: provider.isEnabled,
+      weight: provider.weight,
+      priority: provider.priority,
+      costMultiplier: provider.costMultiplier,
+      groupTag: provider.groupTag,
+      providerType: provider.providerType,
+      preserveClientIp: provider.preserveClientIp,
+      modelRedirects: provider.modelRedirects,
+      allowedModels: provider.allowedModels,
+      joinClaudePool: provider.joinClaudePool,
+      endpointSelectionStrategy: provider.endpointSelectionStrategy,
+      useMultipleEndpoints: provider.useMultipleEndpoints,
+      endpoints: formattedEndpoints,
+      codexInstructionsStrategy: provider.codexInstructionsStrategy,
+      mcpPassthroughType: provider.mcpPassthroughType,
+      mcpPassthroughUrl: provider.mcpPassthroughUrl,
+      limit5hUsd: provider.limit5hUsd,
+      limitDailyUsd: provider.limitDailyUsd,
+      dailyResetMode: provider.dailyResetMode,
+      dailyResetTime: provider.dailyResetTime,
+      limitWeeklyUsd: provider.limitWeeklyUsd,
+      limitMonthlyUsd: provider.limitMonthlyUsd,
+      limitConcurrentSessions: provider.limitConcurrentSessions,
+      maxRetryAttempts: provider.maxRetryAttempts,
+      circuitBreakerFailureThreshold: provider.circuitBreakerFailureThreshold,
+      circuitBreakerOpenDuration: provider.circuitBreakerOpenDuration,
+      circuitBreakerHalfOpenSuccessThreshold: provider.circuitBreakerHalfOpenSuccessThreshold,
+      proxyUrl: provider.proxyUrl,
+      proxyFallbackToDirect: provider.proxyFallbackToDirect,
+      firstByteTimeoutStreamingMs: provider.firstByteTimeoutStreamingMs,
+      streamingIdleTimeoutMs: provider.streamingIdleTimeoutMs,
+      requestTimeoutNonStreamingMs: provider.requestTimeoutNonStreamingMs,
+      websiteUrl: provider.websiteUrl,
+      faviconUrl: provider.faviconUrl,
+      cacheTtlPreference: provider.cacheTtlPreference,
+      tpm: provider.tpm,
+      rpm: provider.rpm,
+      rpd: provider.rpd,
+      cc: provider.cc,
+      createdAt: provider.createdAt.toISOString().split("T")[0],
+      updatedAt: provider.updatedAt.toISOString().split("T")[0],
+    };
+
+    return { ok: true, data: providerDisplay };
+  } catch (error) {
+    logger.error("获取供应商详情失败:", error);
+    const message = error instanceof Error ? error.message : "获取供应商详情失败";
+    return { ok: false, error: message };
   }
 }
 
@@ -314,6 +415,8 @@ export async function addProvider(data: {
   rpm: number | null;
   rpd: number | null;
   cc: number | null;
+  // 新增端点管理支持
+  endpoints?: CreateProviderEndpointData[];
 }): Promise<ActionResult> {
   try {
     const session = await getSession();
@@ -392,6 +495,48 @@ export async function addProvider(data: {
     const provider = await createProvider(payload);
     logger.trace("addProvider:created_success", { name: validated.name, providerId: provider.id });
 
+    // 如果启用多端点且提供了端点配置，则创建端点
+    if (data.endpoints && data.endpoints.length > 0 && provider.useMultipleEndpoints) {
+      try {
+        const endpointResults = await Promise.allSettled(
+          data.endpoints.map((endpoint) =>
+            createEndpoint({
+              ...endpoint,
+              provider_id: provider.id,
+            })
+          )
+        );
+
+        // 检查端点创建结果
+        const failedEndpoints = endpointResults
+          .map((result, index) => ({ result, index }))
+          .filter(({ result }) => result.status === "rejected");
+
+        if (failedEndpoints.length > 0) {
+          logger.warn("addProvider:endpoint_creation_partial_failure", {
+            providerId: provider.id,
+            totalEndpoints: data.endpoints.length,
+            failedCount: failedEndpoints.length,
+            errors: failedEndpoints.map(({ index, result }) => ({
+              endpointIndex: index,
+              error: (result as PromiseRejectedResult).reason,
+            })),
+          });
+        } else {
+          logger.debug("addProvider:endpoints_created_success", {
+            providerId: provider.id,
+            endpointCount: data.endpoints.length,
+          });
+        }
+      } catch (error) {
+        logger.error("addProvider:endpoint_creation_failed", {
+          providerId: provider.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        // 端点创建失败不影响供应商创建的主流程，仅记录错误
+      }
+    }
+
     // 同步熔断器配置到 Redis
     try {
       await saveProviderCircuitConfig(provider.id, {
@@ -464,6 +609,8 @@ export async function editProvider(
     rpm?: number | null;
     rpd?: number | null;
     cc?: number | null;
+    // 新增端点管理支持
+    endpoints?: CreateProviderEndpointData[];
   }
 ): Promise<ActionResult> {
   try {
@@ -512,6 +659,61 @@ export async function editProvider(
 
     if (!provider) {
       return { ok: false, error: "供应商不存在" };
+    }
+
+    // 如果提供了端点配置,则先删除旧端点,再创建新端点(删除后重建策略)
+    if (data.endpoints !== undefined) {
+      try {
+        // 1. 获取并删除所有现有端点
+        const existingEndpoints = await findEndpointsByProviderId(providerId);
+        if (existingEndpoints.length > 0) {
+          await Promise.all(existingEndpoints.map((endpoint) => deleteEndpoint(endpoint.id)));
+          logger.debug("editProvider:deleted_existing_endpoints", {
+            providerId,
+            deletedCount: existingEndpoints.length,
+          });
+        }
+
+        // 2. 如果提供了新端点列表且供应商启用了多端点,则创建新端点
+        if (data.endpoints.length > 0 && provider.useMultipleEndpoints) {
+          const endpointResults = await Promise.allSettled(
+            data.endpoints.map((endpoint) =>
+              createEndpoint({
+                ...endpoint,
+                provider_id: providerId,
+              })
+            )
+          );
+
+          // 检查端点创建结果
+          const failedEndpoints = endpointResults
+            .map((result, index) => ({ result, index }))
+            .filter(({ result }) => result.status === "rejected");
+
+          if (failedEndpoints.length > 0) {
+            logger.warn("editProvider:endpoint_creation_partial_failure", {
+              providerId,
+              totalEndpoints: data.endpoints.length,
+              failedCount: failedEndpoints.length,
+              errors: failedEndpoints.map(({ index, result }) => ({
+                endpointIndex: index,
+                error: (result as PromiseRejectedResult).reason,
+              })),
+            });
+          } else {
+            logger.debug("editProvider:endpoints_created_success", {
+              providerId,
+              endpointCount: data.endpoints.length,
+            });
+          }
+        }
+      } catch (error) {
+        logger.error("editProvider:endpoint_update_failed", {
+          providerId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        // 端点更新失败不影响供应商更新的主流程,仅记录错误
+      }
     }
 
     // 同步熔断器配置到 Redis（如果配置有变化）

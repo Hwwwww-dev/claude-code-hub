@@ -1,5 +1,5 @@
 "use client";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Server } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -37,9 +37,15 @@ import type {
   ProviderDisplay,
   ProviderType,
 } from "@/types/provider";
+import type {
+  CreateProviderEndpointData,
+  EndpointSelectionStrategy,
+  ProviderEndpoint,
+} from "@/types/provider-endpoint";
 import { ModelMultiSelect } from "../model-multi-select";
 import { ModelRedirectEditor } from "../model-redirect-editor";
 import { ApiTestButton } from "./api-test-button";
+import { EndpointEditor } from "./endpoint-editor";
 import { ProxyTestButton } from "./proxy-test-button";
 import { UrlPreview } from "./url-preview";
 
@@ -184,6 +190,35 @@ export function ProviderForm({
     sourceProvider?.mcpPassthroughUrl || ""
   );
 
+  // 多端点配置
+  const [useMultipleEndpoints, setUseMultipleEndpoints] = useState(
+    sourceProvider?.useMultipleEndpoints ?? false
+  );
+  const [endpointSelectionStrategy, setEndpointSelectionStrategy] =
+    useState<EndpointSelectionStrategy>(sourceProvider?.endpointSelectionStrategy ?? "failover");
+  const [endpoints, setEndpoints] = useState<ProviderEndpoint[]>(() => {
+    // 从 ProviderEndpointDisplay 转换为 ProviderEndpoint
+    if (!sourceProvider?.endpoints) return [];
+    return sourceProvider.endpoints.map(
+      (ep): ProviderEndpoint => ({
+        id: ep.id,
+        name: ep.name,
+        url: ep.url,
+        providerId: sourceProvider.id,
+        apiKey: "", // 不显示真实 API Key
+        priority: ep.priority,
+        weight: ep.weight,
+        isEnabled: ep.isEnabled,
+        healthStatus: "unknown",
+        consecutiveFailures: 0,
+        lastFailureTime: null,
+        lastSuccessTime: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+    );
+  });
+
   // 折叠区域状态管理
   type SectionKey =
     | "routing"
@@ -193,7 +228,8 @@ export function ProviderForm({
     | "timeout"
     | "apiTest"
     | "codexStrategy"
-    | "mcpPassthrough";
+    | "mcpPassthrough"
+    | "endpoints";
   const [openSections, setOpenSections] = useState<Record<SectionKey, boolean>>({
     routing: false,
     rateLimit: false,
@@ -203,6 +239,7 @@ export function ProviderForm({
     apiTest: false,
     codexStrategy: false,
     mcpPassthrough: false,
+    endpoints: false,
   });
 
   // 从 localStorage 加载折叠偏好
@@ -248,6 +285,7 @@ export function ProviderForm({
       apiTest: true,
       codexStrategy: true,
       mcpPassthrough: true,
+      endpoints: true,
     });
   };
 
@@ -262,6 +300,7 @@ export function ProviderForm({
       apiTest: false,
       codexStrategy: false,
       mcpPassthrough: false,
+      endpoints: false,
     });
   };
 
@@ -283,8 +322,21 @@ export function ProviderForm({
       return;
     }
 
-    // 处理模型重定向（空对象转为 null）
+    // 处理模型重定向(空对象转为 null)
     const parsedModelRedirects = Object.keys(modelRedirects).length > 0 ? modelRedirects : null;
+
+    // 处理端点数据：转换为 CreateProviderEndpointData 格式
+    const parsedEndpoints = useMultipleEndpoints
+      ? endpoints.map((ep) => ({
+          provider_id: isEdit && provider ? provider.id : 0, // 新建时会被后端替换
+          name: ep.name,
+          url: ep.url,
+          api_key: ep.apiKey || null,
+          priority: ep.priority,
+          weight: ep.weight,
+          is_enabled: ep.isEnabled,
+        }))
+      : undefined;
 
     startTransition(async () => {
       try {
@@ -323,6 +375,7 @@ export function ProviderForm({
             mcp_passthrough_type?: McpPassthroughType;
             mcp_passthrough_url?: string | null;
             preserve_client_ip?: boolean;
+            endpoints?: CreateProviderEndpointData[];
             tpm?: number | null;
             rpm?: number | null;
             rpd?: number | null;
@@ -370,6 +423,7 @@ export function ProviderForm({
             codex_instructions_strategy: codexInstructionsStrategy,
             mcp_passthrough_type: mcpPassthroughType,
             mcp_passthrough_url: mcpPassthroughUrl.trim() || null,
+            endpoints: parsedEndpoints,
             tpm: null,
             rpm: null,
             rpd: null,
@@ -431,6 +485,7 @@ export function ProviderForm({
             codex_instructions_strategy: codexInstructionsStrategy,
             mcp_passthrough_type: mcpPassthroughType,
             mcp_passthrough_url: mcpPassthroughUrl.trim() || null,
+            endpoints: parsedEndpoints,
             tpm: null,
             rpm: null,
             rpd: null,
@@ -1719,6 +1774,59 @@ export function ProviderForm({
                     </p>
                   )}
                 </div>
+              )}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+
+        {/* 多端点配置 */}
+        <Collapsible open={openSections.endpoints} onOpenChange={() => toggleSection("endpoints")}>
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="flex items-center justify-between w-full py-4 border-t hover:bg-muted/50 transition-colors"
+              disabled={isPending}
+            >
+              <div className="flex items-center gap-2">
+                <ChevronDown
+                  className={`h-4 w-4 transition-transform ${
+                    openSections.endpoints ? "rotate-180" : ""
+                  }`}
+                />
+                <Server className="h-4 w-4" />
+                <span className="text-sm font-medium">{t("endpoints.title")}</span>
+                {endpoints.length > 0 && <Badge variant="outline">{endpoints.length} 个端点</Badge>}
+              </div>
+              <span className="text-xs text-muted-foreground">
+                {useMultipleEndpoints ? t("endpoints.enabled") : t("endpoints.disabled")}
+              </span>
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-4 pb-4">
+            <div className="space-y-4">
+              {/* 启用多端点开关 */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label>{t("endpoints.enableMultiple")}</Label>
+                  <p className="text-sm text-muted-foreground">
+                    {t("endpoints.enableMultipleHint")}
+                  </p>
+                </div>
+                <Switch
+                  checked={useMultipleEndpoints}
+                  onCheckedChange={setUseMultipleEndpoints}
+                  disabled={isPending}
+                />
+              </div>
+
+              {useMultipleEndpoints && (
+                <EndpointEditor
+                  endpoints={endpoints}
+                  strategy={endpointSelectionStrategy}
+                  onEndpointsChange={setEndpoints}
+                  onStrategyChange={setEndpointSelectionStrategy}
+                  providerType={providerType}
+                />
               )}
             </div>
           </CollapsibleContent>

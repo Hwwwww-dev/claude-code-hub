@@ -76,6 +76,10 @@ export class ProxySession {
   // Cache TTL override (resolved)
   private cacheTtlResolved: CacheTtlResolved | null = null;
 
+  // 端点追踪：记录被排除的端点和当前使用的端点
+  private excludedEndpointIds: number[] = [];
+  private currentEndpoint: { id: number; name: string; url: string } | null = null;
+
   private constructor(init: {
     startTime: number;
     method: string;
@@ -356,6 +360,10 @@ export class ProxySession {
       circuitFailureThreshold: metadata?.circuitFailureThreshold,
       errorDetails: metadata?.errorDetails, // 结构化错误详情
       decisionContext: metadata?.decisionContext,
+      // 端点信息
+      endpointId: this.currentEndpoint?.id,
+      endpointName: this.currentEndpoint?.name,
+      endpointUrl: this.currentEndpoint?.url,
     };
 
     // 避免重复添加同一个供应商（除非是重试，即有 attemptNumber）
@@ -478,6 +486,36 @@ export class ProxySession {
    */
   getLastSelectionContext(): ProviderChainItem["decisionContext"] | undefined {
     return this._lastSelectionContext;
+  }
+
+  /**
+   * 获取被排除的端点 ID 列表
+   */
+  getExcludedEndpointIds(): number[] {
+    return this.excludedEndpointIds;
+  }
+
+  /**
+   * 添加端点到排除列表（用于失败重试）
+   */
+  addExcludedEndpoint(endpointId: number): void {
+    if (!this.excludedEndpointIds.includes(endpointId)) {
+      this.excludedEndpointIds.push(endpointId);
+    }
+  }
+
+  /**
+   * 设置当前使用的端点
+   */
+  setCurrentEndpoint(endpoint: { id: number; name: string; url: string }): void {
+    this.currentEndpoint = endpoint;
+  }
+
+  /**
+   * 获取当前端点信息
+   */
+  getCurrentEndpoint(): { id: number; name: string; url: string } | null {
+    return this.currentEndpoint;
   }
 }
 

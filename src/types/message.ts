@@ -90,6 +90,11 @@ export interface ProviderChainItem {
     clientError?: string; // 详细的客户端错误消息（包含匹配的白名单模式）
   };
 
+  // 端点信息（用于端点追踪和失败重试）
+  endpointId?: number; // 端点 ID
+  endpointName?: string; // 端点名称
+  endpointUrl?: string; // 端点 URL
+
   // === 决策上下文（完整记录） ===
   decisionContext?: {
     // --- 供应商池状态 ---
