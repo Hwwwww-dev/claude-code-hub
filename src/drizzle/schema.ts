@@ -17,6 +17,15 @@ import { relations, sql } from 'drizzle-orm';
 // Enums
 export const dailyResetModeEnum = pgEnum('daily_reset_mode', ['fixed', 'rolling']);
 
+// 成本规则类型枚举：model = 模型级倍率，time_period = 时段级倍率
+export const costRuleTypeEnum = pgEnum('cost_rule_type', ['model', 'time_period']);
+
+// 倍率叠加策略枚举：highest_priority = 单选最高优先级，multiply = 多倍率相乘
+export const costMultiplierStrategyEnum = pgEnum('cost_multiplier_strategy', [
+  'highest_priority',
+  'multiply',
+]);
+
 // Users table
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
@@ -111,6 +120,16 @@ export const providers = pgTable('providers', {
   priority: integer('priority').notNull().default(0),
   costMultiplier: numeric('cost_multiplier', { precision: 10, scale: 4 }).default('1.0'),
   groupTag: varchar('group_tag', { length: 50 }),
+
+  // 成本倍率规则配置
+  // - costMultiplierStrategy: 当同时匹配多个规则时的叠加策略
+  //   - 'highest_priority': 单选最高优先级规则
+  //   - 'multiply': 所有匹配规则的倍率相乘
+  // - timezone: 用于时段级倍率的时区计算（IANA 时区标识符）
+  costMultiplierStrategy: costMultiplierStrategyEnum('cost_multiplier_strategy')
+    .notNull()
+    .default('highest_priority'),
+  timezone: varchar('timezone', { length: 50 }).default('UTC'),
 
   // 供应商类型：扩展支持 5 种类型
   // - claude: Anthropic 提供商（标准认证）
@@ -463,8 +482,65 @@ export const keysRelations = relations(keys, ({ one, many }) => ({
   messageRequests: many(messageRequest),
 }));
 
+// 时段配置类型（用于 time_periods JSONB 字段）
+export type TimePeriodConfig = {
+  startTime: string;  // "HH:mm" 格式，如 "09:00"
+  endTime: string;    // "HH:mm" 格式，如 "18:00"，支持跨天
+  weekdays?: number[] | null;  // 1=周一 到 7=周日，null/空数组表示每天
+};
+
+// 供应商成本规则表：支持模型级倍率和时段级倍率
+export const providerCostRules = pgTable('provider_cost_rules', {
+  id: serial('id').primaryKey(),
+  providerId: integer('provider_id')
+    .notNull()
+    .references(() => providers.id, { onDelete: 'cascade' }),
+
+  // 规则类型
+  ruleType: costRuleTypeEnum('rule_type').notNull(),
+
+  // 规则名称
+  name: varchar('name', { length: 100 }).notNull(),
+
+  // 倍率值
+  multiplier: numeric('multiplier', { precision: 10, scale: 4 }).notNull(),
+
+  // 优先级（数值越大越高）
+  priority: integer('priority').notNull().default(0),
+
+  // 模型级倍率：模型匹配模式（支持通配符 * 和 ?）
+  modelPattern: varchar('model_pattern', { length: 200 }),
+
+  // 时段级倍率：时间段配置
+  timePeriods: jsonb('time_periods').$type<TimePeriodConfig[]>(),
+
+  // 是否启用
+  isEnabled: boolean('is_enabled').notNull().default(true),
+
+  // 备注
+  description: text('description'),
+
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+}, (table) => ({
+  providerRuleTypeIdx: index('idx_provider_cost_rules_provider_type').on(
+    table.providerId,
+    table.ruleType
+  ),
+  enabledIdx: index('idx_provider_cost_rules_enabled').on(table.isEnabled),
+}));
+
+// 关系定义
+export const providerCostRulesRelations = relations(providerCostRules, ({ one }) => ({
+  provider: one(providers, {
+    fields: [providerCostRules.providerId],
+    references: [providers.id],
+  }),
+}));
+
 export const providersRelations = relations(providers, ({ many }) => ({
   messageRequests: many(messageRequest),
+  costRules: many(providerCostRules),
 }));
 
 export const messageRequestRelations = relations(messageRequest, ({ one }) => ({

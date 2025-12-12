@@ -12,7 +12,9 @@ import {
   updateMessageRequestDuration,
 } from "@/repository/message";
 import { findLatestPriceByModel } from "@/repository/model-price";
+import { calculateEffectiveCostMultiplier } from "@/repository/provider-cost-rules";
 import { getSystemSettings } from "@/repository/system-config";
+import type { CostMultiplierStrategy } from "@/types/cost-rules";
 import type { SessionUsageUpdate } from "@/types/session";
 import { defaultRegistry } from "../converters";
 import type { Format, TransformState } from "../converters/types";
@@ -268,6 +270,12 @@ export class ProxyResponseHandler {
         usageRecord = usageResult.usageRecord;
         usageMetrics = usageResult.usageMetrics;
 
+        // 扩展 provider 对象以包含成本规则所需字段
+        const providerWithCostRules = provider as typeof provider & {
+          costMultiplierStrategy?: CostMultiplierStrategy;
+          timezone?: string | null;
+        };
+
         // Codex: Extract prompt_cache_key and update session binding
         if (provider.providerType === "codex" && session.sessionId && provider.id) {
           try {
@@ -304,7 +312,13 @@ export class ProxyResponseHandler {
             session.getOriginalModel(),
             session.getCurrentModel(),
             usageMetrics,
-            provider.costMultiplier
+            {
+              id: provider.id,
+              costMultiplier: provider.costMultiplier,
+              costMultiplierStrategy:
+                providerWithCostRules.costMultiplierStrategy ?? "highest_priority",
+              timezone: providerWithCostRules.timezone ?? null,
+            }
           );
 
           // 追踪消费到 Redis（用于限流）
@@ -313,15 +327,23 @@ export class ProxyResponseHandler {
 
         // 更新 session 使用量到 Redis（用于实时监控）
         if (session.sessionId && usageMetrics) {
-          // 计算成本（复用相同逻辑）
+          // 计算成本（复用相同逻辑，应用成本规则）
           let costUsdStr: string | undefined;
           if (session.request.model) {
             const priceData = await findLatestPriceByModel(session.request.model);
             if (priceData?.priceData) {
+              // 获取有效倍率（考虑成本规则）
+              const multiplierResult = await calculateEffectiveCostMultiplier(
+                provider.id,
+                parseFloat(provider.costMultiplier?.toString() || "1.0"),
+                providerWithCostRules.costMultiplierStrategy ?? "highest_priority",
+                providerWithCostRules.timezone ?? "UTC",
+                session.request.model
+              );
               const cost = calculateRequestCost(
                 usageMetrics,
                 priceData.priceData,
-                provider.costMultiplier
+                multiplierResult.finalMultiplier
               );
               if (cost.gt(0)) {
                 costUsdStr = cost.toString();
@@ -852,12 +874,23 @@ export class ProxyResponseHandler {
           }
         }
 
+        // 扩展 provider 对象以包含成本规则所需字段
+        const providerWithCostRules = provider as typeof provider & {
+          costMultiplierStrategy?: CostMultiplierStrategy;
+          timezone?: string | null;
+        };
         await updateRequestCostFromUsage(
           messageContext.id,
           session.getOriginalModel(),
           session.getCurrentModel(),
           usageForCost,
-          provider.costMultiplier
+          {
+            id: provider.id,
+            costMultiplier: provider.costMultiplier,
+            costMultiplierStrategy:
+              providerWithCostRules.costMultiplierStrategy ?? "highest_priority",
+            timezone: providerWithCostRules.timezone ?? null,
+          }
         );
 
         // 追踪消费到 Redis（用于限流）
@@ -869,10 +902,18 @@ export class ProxyResponseHandler {
           if (session.request.model) {
             const priceData = await findLatestPriceByModel(session.request.model);
             if (priceData?.priceData) {
+              // 获取有效倍率（考虑成本规则）
+              const multiplierResult = await calculateEffectiveCostMultiplier(
+                provider.id,
+                parseFloat(provider.costMultiplier?.toString() || "1.0"),
+                providerWithCostRules.costMultiplierStrategy ?? "highest_priority",
+                providerWithCostRules.timezone ?? "UTC",
+                session.request.model
+              );
               const cost = calculateRequestCost(
                 usageForCost,
                 priceData.priceData,
-                provider.costMultiplier
+                multiplierResult.finalMultiplier
               );
               if (cost.gt(0)) {
                 costUsdStr = cost.toString();
@@ -1478,7 +1519,12 @@ async function updateRequestCostFromUsage(
   originalModel: string | null,
   redirectedModel: string | null,
   usage: UsageMetrics | null,
-  costMultiplier: number = 1.0
+  provider: {
+    id: number;
+    costMultiplier: number;
+    costMultiplierStrategy: CostMultiplierStrategy;
+    timezone: string | null;
+  }
 ): Promise<void> {
   if (!usage) {
     logger.warn("[CostCalculation] No usage data, skipping cost update", {
@@ -1560,15 +1606,49 @@ async function updateRequestCostFromUsage(
     return;
   }
 
+  // 获取有效倍率（考虑成本规则）
+  let effectiveMultiplier = parseFloat(provider.costMultiplier.toString());
+  let appliedRules: string[] = [];
+
+  if (usedModelForPricing) {
+    try {
+      const multiplierResult = await calculateEffectiveCostMultiplier(
+        provider.id,
+        parseFloat(provider.costMultiplier?.toString() || "1.0"),
+        provider.costMultiplierStrategy || "highest_priority",
+        provider.timezone || "UTC",
+        usedModelForPricing
+      );
+      effectiveMultiplier = multiplierResult.finalMultiplier;
+      appliedRules = multiplierResult.appliedRules.map((r) => `${r.ruleName}(${r.multiplier}x)`);
+    } catch (error) {
+      logger.warn("[CostMultiplier] Failed to calculate cost multiplier, using base multiplier", {
+        providerId: provider.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (appliedRules.length > 0) {
+    logger.info("[CostCalculation] Cost rules applied", {
+      messageId,
+      baseMultiplier: provider.costMultiplier,
+      effectiveMultiplier,
+      appliedRules,
+    });
+  }
+
   // 计算费用
-  const cost = calculateRequestCost(usage, priceData.priceData, costMultiplier);
+  const cost = calculateRequestCost(usage, priceData.priceData, effectiveMultiplier);
 
   logger.info("[CostCalculation] Cost calculated successfully", {
     messageId,
     usedModelForPricing,
     billingModelSource,
     costUsd: cost.toString(),
-    costMultiplier,
+    baseMultiplier: provider.costMultiplier,
+    effectiveMultiplier,
+    appliedRules: appliedRules.length > 0 ? appliedRules : undefined,
     usage,
   });
 
@@ -1641,12 +1721,22 @@ async function finalizeRequestStats(
     cache_creation_input_tokens: cacheTotal,
   };
 
+  // 扩展 provider 对象以包含成本规则所需字段
+  const providerWithCostRules = provider as typeof provider & {
+    costMultiplierStrategy?: CostMultiplierStrategy;
+    timezone?: string | null;
+  };
   await updateRequestCostFromUsage(
     messageContext.id,
     session.getOriginalModel(),
     session.getCurrentModel(),
     normalizedUsage,
-    provider.costMultiplier
+    {
+      id: provider.id,
+      costMultiplier: provider.costMultiplier,
+      costMultiplierStrategy: providerWithCostRules.costMultiplierStrategy ?? "highest_priority",
+      timezone: providerWithCostRules.timezone ?? null,
+    }
   );
 
   // 5. 追踪消费到 Redis（用于限流）
@@ -1658,10 +1748,18 @@ async function finalizeRequestStats(
     if (session.request.model) {
       const priceData = await findLatestPriceByModel(session.request.model);
       if (priceData?.priceData) {
+        // 获取有效倍率（考虑成本规则）
+        const multiplierResult = await calculateEffectiveCostMultiplier(
+          provider.id,
+          parseFloat(provider.costMultiplier?.toString() || "1.0"),
+          providerWithCostRules.costMultiplierStrategy ?? "highest_priority",
+          providerWithCostRules.timezone ?? "UTC",
+          session.request.model
+        );
         const cost = calculateRequestCost(
           normalizedUsage,
           priceData.priceData,
-          provider.costMultiplier
+          multiplierResult.finalMultiplier
         );
         if (cost.gt(0)) {
           costUsdStr = cost.toString();
@@ -1714,11 +1812,25 @@ async function trackCostToRedis(session: ProxySession, usage: UsageMetrics | nul
   const modelName = session.request.model;
   if (!modelName) return;
 
-  // 计算成本（应用倍率）
+  // 计算成本（应用倍率和成本规则）
   const priceData = await findLatestPriceByModel(modelName);
   if (!priceData?.priceData) return;
 
-  const cost = calculateRequestCost(usage, priceData.priceData, provider.costMultiplier);
+  // 扩展 provider 对象以包含成本规则所需字段
+  const providerWithCostRules = provider as typeof provider & {
+    costMultiplierStrategy?: CostMultiplierStrategy;
+    timezone?: string | null;
+  };
+  // 获取有效倍率（考虑成本规则）
+  const multiplierResult = await calculateEffectiveCostMultiplier(
+    provider.id,
+    parseFloat(provider.costMultiplier?.toString() || "1.0"),
+    providerWithCostRules.costMultiplierStrategy ?? "highest_priority",
+    providerWithCostRules.timezone ?? "UTC",
+    modelName
+  );
+
+  const cost = calculateRequestCost(usage, priceData.priceData, multiplierResult.finalMultiplier);
   if (cost.lte(0)) return;
 
   const costFloat = parseFloat(cost.toString());

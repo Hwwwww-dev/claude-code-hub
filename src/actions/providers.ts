@@ -179,6 +179,8 @@ export async function getProviders(): Promise<ProviderDisplay[]> {
         weight: provider.weight,
         priority: provider.priority,
         costMultiplier: provider.costMultiplier,
+        costMultiplierStrategy: provider.costMultiplierStrategy,
+        timezone: provider.timezone,
         groupTag: provider.groupTag,
         providerType: provider.providerType,
         preserveClientIp: provider.preserveClientIp,
@@ -284,6 +286,8 @@ export async function addProvider(data: {
   priority?: number;
   cost_multiplier?: number;
   group_tag?: string | null;
+  cost_multiplier_strategy?: "highest_priority" | "multiply";
+  timezone?: string | null;
   provider_type?: ProviderType;
   preserve_client_ip?: boolean;
   model_redirects?: Record<string, string> | null;
@@ -435,6 +439,8 @@ export async function editProvider(
     priority?: number;
     cost_multiplier?: number;
     group_tag?: string | null;
+    cost_multiplier_strategy?: "highest_priority" | "multiply";
+    timezone?: string | null;
     provider_type?: ProviderType;
     preserve_client_ip?: boolean;
     model_redirects?: Record<string, string> | null;
@@ -442,6 +448,7 @@ export async function editProvider(
     join_claude_pool?: boolean;
     limit_5h_usd?: number | null;
     limit_daily_usd?: number | null;
+    daily_reset_mode?: "fixed" | "rolling";
     daily_reset_time?: string;
     limit_weekly_usd?: number | null;
     limit_monthly_usd?: number | null;

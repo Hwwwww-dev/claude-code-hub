@@ -31,12 +31,14 @@ import { Switch } from "@/components/ui/switch";
 import { TagInput } from "@/components/ui/tag-input";
 import { PROVIDER_DEFAULTS, PROVIDER_TIMEOUT_DEFAULTS } from "@/lib/constants/provider.constants";
 import { extractBaseUrl, isValidUrl, validateNumericField } from "@/lib/utils/validation";
+import type { CostMultiplierStrategy } from "@/types/cost-rules";
 import type {
   CodexInstructionsStrategy,
   McpPassthroughType,
   ProviderDisplay,
   ProviderType,
 } from "@/types/provider";
+import { CostRulesSection } from "../cost-rules-section";
 import { ModelMultiSelect } from "../model-multi-select";
 import { ModelRedirectEditor } from "../model-redirect-editor";
 import { ApiTestButton } from "./api-test-button";
@@ -184,6 +186,12 @@ export function ProviderForm({
     sourceProvider?.mcpPassthroughUrl || ""
   );
 
+  // 成本规则配置
+  const [costMultiplierStrategy, setCostMultiplierStrategy] = useState<CostMultiplierStrategy>(
+    sourceProvider?.costMultiplierStrategy ?? "highest_priority"
+  );
+  const [timezone, setTimezone] = useState<string>(sourceProvider?.timezone ?? "UTC");
+
   // 折叠区域状态管理
   type SectionKey =
     | "routing"
@@ -193,7 +201,8 @@ export function ProviderForm({
     | "timeout"
     | "apiTest"
     | "codexStrategy"
-    | "mcpPassthrough";
+    | "mcpPassthrough"
+    | "costRules";
   const [openSections, setOpenSections] = useState<Record<SectionKey, boolean>>({
     routing: false,
     rateLimit: false,
@@ -203,6 +212,7 @@ export function ProviderForm({
     apiTest: false,
     codexStrategy: false,
     mcpPassthrough: false,
+    costRules: false,
   });
 
   // 从 localStorage 加载折叠偏好
@@ -248,6 +258,7 @@ export function ProviderForm({
       apiTest: true,
       codexStrategy: true,
       mcpPassthrough: true,
+      costRules: true,
     });
   };
 
@@ -262,6 +273,7 @@ export function ProviderForm({
       apiTest: false,
       codexStrategy: false,
       mcpPassthrough: false,
+      costRules: false,
     });
   };
 
@@ -301,6 +313,8 @@ export function ProviderForm({
             weight?: number;
             cost_multiplier?: number;
             group_tag?: string | null;
+            cost_multiplier_strategy?: "highest_priority" | "multiply";
+            timezone?: string | null;
             limit_5h_usd?: number | null;
             limit_daily_usd?: number | null;
             daily_reset_mode?: "fixed" | "rolling";
@@ -339,6 +353,8 @@ export function ProviderForm({
             weight: weight,
             cost_multiplier: costMultiplier,
             group_tag: groupTag.length > 0 ? groupTag.join(",") : null,
+            cost_multiplier_strategy: costMultiplierStrategy,
+            timezone: timezone,
             limit_5h_usd: limit5hUsd,
             limit_daily_usd: limitDailyUsd,
             daily_reset_mode: dailyResetMode,
@@ -399,6 +415,8 @@ export function ProviderForm({
             priority: priority,
             cost_multiplier: costMultiplier,
             group_tag: groupTag.length > 0 ? groupTag.join(",") : null,
+            cost_multiplier_strategy: costMultiplierStrategy,
+            timezone: timezone,
             limit_5h_usd: limit5hUsd,
             limit_daily_usd: limitDailyUsd,
             daily_reset_mode: dailyResetMode,
@@ -1721,6 +1739,38 @@ export function ProviderForm({
                 </div>
               )}
             </div>
+          </CollapsibleContent>
+        </Collapsible>
+
+        {/* 成本规则配置 */}
+        <Collapsible open={openSections.costRules} onOpenChange={() => toggleSection("costRules")}>
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="flex items-center justify-between w-full py-4 border-t hover:bg-muted/50 transition-colors"
+              disabled={isPending}
+            >
+              <div className="flex items-center gap-2">
+                <ChevronDown
+                  className={`h-4 w-4 transition-transform ${
+                    openSections.costRules ? "rotate-180" : ""
+                  }`}
+                />
+                <span className="text-sm font-medium">成本规则配置</span>
+              </div>
+              <Badge variant="outline" className="text-xs">
+                实验性
+              </Badge>
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-4 pb-4">
+            <CostRulesSection
+              providerId={provider?.id}
+              costMultiplierStrategy={costMultiplierStrategy}
+              onStrategyChange={setCostMultiplierStrategy}
+              timezone={timezone}
+              onTimezoneChange={setTimezone}
+            />
           </CollapsibleContent>
         </Collapsible>
 

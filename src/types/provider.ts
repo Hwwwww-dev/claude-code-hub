@@ -30,6 +30,10 @@ export interface Provider {
   costMultiplier: number;
   groupTag: string | null;
 
+  // 成本倍率规则配置
+  costMultiplierStrategy: "highest_priority" | "multiply";
+  timezone: string | null;
+
   // 供应商类型：扩展支持 4 种类型
   providerType: ProviderType;
   // 是否透传客户端 IP
@@ -119,6 +123,9 @@ export interface ProviderDisplay {
   priority: number;
   costMultiplier: number;
   groupTag: string | null;
+  // 成本倍率规则配置
+  costMultiplierStrategy: "highest_priority" | "multiply";
+  timezone: string | null;
   // 供应商类型
   providerType: ProviderType;
   // 是否透传客户端 IP
@@ -186,6 +193,10 @@ export interface CreateProviderData {
   cost_multiplier?: number;
   group_tag?: string | null;
 
+  // 成本倍率规则配置
+  cost_multiplier_strategy?: "highest_priority" | "multiply";
+  timezone?: string | null;
+
   // 供应商类型和模型配置
   provider_type?: ProviderType;
   preserve_client_ip?: boolean;
@@ -249,6 +260,10 @@ export interface UpdateProviderData {
   priority?: number;
   cost_multiplier?: number;
   group_tag?: string | null;
+
+  // 成本倍率规则配置
+  cost_multiplier_strategy?: "highest_priority" | "multiply";
+  timezone?: string | null;
 
   // 供应商类型和模型配置
   provider_type?: ProviderType;

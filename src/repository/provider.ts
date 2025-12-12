@@ -18,6 +18,8 @@ export async function createProvider(providerData: CreateProviderData): Promise<
     priority: providerData.priority,
     costMultiplier:
       providerData.cost_multiplier != null ? providerData.cost_multiplier.toString() : "1.0",
+    costMultiplierStrategy: providerData.cost_multiplier_strategy ?? "highest_priority",
+    timezone: providerData.timezone ?? "UTC",
     groupTag: providerData.group_tag,
     providerType: providerData.provider_type,
     preserveClientIp: providerData.preserve_client_ip ?? false,
@@ -65,6 +67,8 @@ export async function createProvider(providerData: CreateProviderData): Promise<
     weight: providers.weight,
     priority: providers.priority,
     costMultiplier: providers.costMultiplier,
+    costMultiplierStrategy: providers.costMultiplierStrategy,
+    timezone: providers.timezone,
     groupTag: providers.groupTag,
     providerType: providers.providerType,
     preserveClientIp: providers.preserveClientIp,
@@ -119,6 +123,8 @@ export async function findProviderList(
       weight: providers.weight,
       priority: providers.priority,
       costMultiplier: providers.costMultiplier,
+      costMultiplierStrategy: providers.costMultiplierStrategy,
+      timezone: providers.timezone,
       groupTag: providers.groupTag,
       providerType: providers.providerType,
       preserveClientIp: providers.preserveClientIp,
@@ -184,6 +190,8 @@ export async function findAllProviders(): Promise<Provider[]> {
       weight: providers.weight,
       priority: providers.priority,
       costMultiplier: providers.costMultiplier,
+      costMultiplierStrategy: providers.costMultiplierStrategy,
+      timezone: providers.timezone,
       groupTag: providers.groupTag,
       providerType: providers.providerType,
       preserveClientIp: providers.preserveClientIp,
@@ -243,6 +251,8 @@ export async function findProviderById(id: number): Promise<Provider | null> {
       weight: providers.weight,
       priority: providers.priority,
       costMultiplier: providers.costMultiplier,
+      costMultiplierStrategy: providers.costMultiplierStrategy,
+      timezone: providers.timezone,
       groupTag: providers.groupTag,
       providerType: providers.providerType,
       preserveClientIp: providers.preserveClientIp,
@@ -307,6 +317,9 @@ export async function updateProvider(
   if (providerData.cost_multiplier !== undefined)
     dbData.costMultiplier =
       providerData.cost_multiplier != null ? providerData.cost_multiplier.toString() : "1.0";
+  if (providerData.cost_multiplier_strategy !== undefined)
+    dbData.costMultiplierStrategy = providerData.cost_multiplier_strategy;
+  if (providerData.timezone !== undefined) dbData.timezone = providerData.timezone;
   if (providerData.group_tag !== undefined) dbData.groupTag = providerData.group_tag;
   if (providerData.provider_type !== undefined) dbData.providerType = providerData.provider_type;
   if (providerData.preserve_client_ip !== undefined)
@@ -380,6 +393,8 @@ export async function updateProvider(
       weight: providers.weight,
       priority: providers.priority,
       costMultiplier: providers.costMultiplier,
+      costMultiplierStrategy: providers.costMultiplierStrategy,
+      timezone: providers.timezone,
       groupTag: providers.groupTag,
       providerType: providers.providerType,
       preserveClientIp: providers.preserveClientIp,
