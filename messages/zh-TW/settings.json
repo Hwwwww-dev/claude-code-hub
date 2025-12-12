@@ -1717,5 +1717,48 @@
   "mcpPassthroughUrlLabel": "MCP 透傳 URL",
   "mcpPassthroughUrlPlaceholder": "https://api.minimaxi.com",
   "mcpPassthroughUrlDesc": "MCP 服務的基礎 URL。留空則自動從提供商 URL 提取基礎域名",
-  "mcpPassthroughUrlAuto": "自動提取: {url}"
+  "mcpPassthroughUrlAuto": "自動提取: {url}",
+  "endpoints": {
+    "title": "端點配置",
+    "enableMultiple": "啟用多端點",
+    "enableMultipleHint": "為此供應商配置多個 API 地址以實現負載均衡或故障轉移",
+    "strategy": {
+      "label": "選擇策略",
+      "failover": "故障轉移",
+      "failoverDesc": "按優先級順序使用，主地址失敗時切換",
+      "round_robin": "輪詢",
+      "round_robinDesc": "依次使用各個端點",
+      "random": "隨機",
+      "randomDesc": "隨機選擇端點",
+      "weighted": "加權隨機",
+      "weightedDesc": "按權重分配請求"
+    },
+    "list": {
+      "empty": "未配置端點",
+      "add": "添加端點"
+    },
+    "form": {
+      "name": "端點名稱",
+      "namePlaceholder": "例如：主節點-US",
+      "url": "API 地址",
+      "apiKey": "API Key（可選）",
+      "apiKeyHint": "留空則繼承供應商密鑰",
+      "priority": "優先級",
+      "priorityHint": "數值越小優先級越高（故障轉移模式）",
+      "weight": "權重",
+      "weightHint": "數值越大請求越多（加權隨機模式）",
+      "enabled": "啟用",
+      "save": "保存端點",
+      "cancel": "取消",
+      "delete": "刪除端點",
+      "edit": "編輯端點"
+    },
+    "health": {
+      "healthy": "健康",
+      "degraded": "降級",
+      "unhealthy": "不健康",
+      "status": "健康狀態",
+      "failures": "連續失敗"
+    }
+  }
 }

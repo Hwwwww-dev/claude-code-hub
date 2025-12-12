@@ -1711,5 +1711,48 @@
   "mcpPassthroughUrlLabel": "MCP パススルー URL",
   "mcpPassthroughUrlPlaceholder": "https://api.minimaxi.com",
   "mcpPassthroughUrlDesc": "MCP サービスベース URL。空のままにすると、プロバイダ URL から自動的に抽出されます",
-  "mcpPassthroughUrlAuto": "自動抽出: {url}"
+  "mcpPassthroughUrlAuto": "自動抽出: {url}",
+  "endpoints": {
+    "title": "エンドポイント設定",
+    "enableMultiple": "複数エンドポイントを有効化",
+    "enableMultipleHint": "負荷分散またはフェイルオーバーのために複数の API アドレスを設定",
+    "strategy": {
+      "label": "選択戦略",
+      "failover": "フェイルオーバー",
+      "failoverDesc": "優先順位順に使用、障害時に切替",
+      "round_robin": "ラウンドロビン",
+      "round_robinDesc": "各エンドポイントを順番に使用",
+      "random": "ランダム",
+      "randomDesc": "ランダムにエンドポイントを選択",
+      "weighted": "重み付きランダム",
+      "weightedDesc": "重みに基づいてリクエストを配分"
+    },
+    "list": {
+      "empty": "エンドポイントが設定されていません",
+      "add": "エンドポイントを追加"
+    },
+    "form": {
+      "name": "エンドポイント名",
+      "namePlaceholder": "例：プライマリ-US",
+      "url": "API アドレス",
+      "apiKey": "API Key（オプション）",
+      "apiKeyHint": "空欄の場合はプロバイダーキーを継承",
+      "priority": "優先度",
+      "priorityHint": "数値が小さいほど優先度が高い（フェイルオーバーモード）",
+      "weight": "重み",
+      "weightHint": "数値が大きいほどリクエストが多い（重み付きモード）",
+      "enabled": "有効",
+      "save": "エンドポイントを保存",
+      "cancel": "キャンセル",
+      "delete": "エンドポイントを削除",
+      "edit": "エンドポイントを編集"
+    },
+    "health": {
+      "healthy": "正常",
+      "degraded": "劣化",
+      "unhealthy": "異常",
+      "status": "ヘルス状態",
+      "failures": "連続失敗"
+    }
+  }
 }
